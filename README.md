@@ -78,36 +78,36 @@ Example:
 
 ```bash
 # Add an account
-curl -X POST http://localhost:3000/accounts \
+curl -X POST http://localhost:33001/accounts \
   -H "Content-Type: application/json" \
   -d '{"friendlyName":"Main","discordId":"123456789012345678","steam64ids":["76561198000000000"],"customItems":["AK-47 | Redline (Field-Tested)"]}'
 
 # Create account via Discord
-curl -X POST http://localhost:3000/accounts/discord \
+curl -X POST http://localhost:33001/accounts/discord \
   -H "Content-Type: application/json" \
   -d '{"discordId":"123456789012345678","friendlyName":"Main"}'
 
 # Add a Steam ID to an existing account
-curl -X POST http://localhost:3000/accounts/<uid>/steam64ids \
+curl -X POST http://localhost:33001/accounts/<uid>/steam64ids \
   -H "Content-Type: application/json" \
   -d '{"steam64id":"76561198000000000"}'
 
 # Add a custom item to track
-curl -X POST http://localhost:3000/accounts/<uid>/customItems \
+curl -X POST http://localhost:33001/accounts/<uid>/customItems \
   -H "Content-Type: application/json" \
   -d '{"item":"AK-47 | Redline (Field-Tested)"}'
 
 # Check price history
-curl "http://localhost:3000/accounts/<uid>/prices?days=7"
+curl "http://localhost:33001/accounts/<uid>/prices?days=7"
 
 # Check alerts for a user
-curl http://localhost:3000/alerts/user/<uid>
+curl http://localhost:33001/alerts/user/<uid>
 
 # Resolve all alerts for a user
-curl -X PUT http://localhost:3000/alerts/user/<uid>/resolve-all
+curl -X PUT http://localhost:33001/alerts/user/<uid>/resolve-all
 
 # Trigger a manual scan
-curl -X POST http://localhost:3000/alerts/scan
+curl -X POST http://localhost:33001/alerts/scan
 ```
 
 ## How It Works
