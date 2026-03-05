@@ -1,0 +1,18 @@
+{
+  "name": "invenchecker",
+  "version": "0.0.1",
+  "description": "CS2 inventory price tracker",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "cross-env NODE_ENV=development node src/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "cross-env": "^7.0.3",
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3",
+    "pino": "^9.3.2",
+    "pino-pretty": "^11.2.2"
+  }
+}
