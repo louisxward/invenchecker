@@ -1,0 +1,19 @@
+'use strict';
+
+const path = require('path');
+
+const DATA_DIR = path.join(__dirname, '../data');
+
+module.exports = {
+  PORT:                process.env.PORT                 ? Number(process.env.PORT)                : 33001,
+  DB_PATH:             process.env.DB_PATH              || path.join(DATA_DIR, 'invenchecker.db'),
+  ACCOUNTS_PATH:       process.env.CONFIG_PATH          || path.join(DATA_DIR, 'accounts.json'),
+  LOG_LEVEL:           process.env.LOG_LEVEL            || 'info',
+  PRICE_RATE_LIMIT_MS: process.env.PRICE_RATE_LIMIT_MS  ? Number(process.env.PRICE_RATE_LIMIT_MS) : 1100,
+  SPIKE_THRESHOLD:     process.env.SPIKE_THRESHOLD      ? Number(process.env.SPIKE_THRESHOLD)     : 1.15,
+  SEVEN_DAYS_SECS:     process.env.SEVEN_DAYS_SECS      ? Number(process.env.SEVEN_DAYS_SECS)     : 7 * 24 * 60 * 60,
+  SCAN_CRON:           process.env.SCAN_CRON            || '0 */6 * * *',
+  STEAM_APP_ID:        process.env.STEAM_APP_ID         ? Number(process.env.STEAM_APP_ID)        : 730,
+  STEAM_INVENTORY_URL: 'https://steamcommunity.com/inventory',
+  STEAM_PRICE_URL:     'https://steamcommunity.com/market/priceoverview',
+};

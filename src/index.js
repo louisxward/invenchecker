@@ -4,6 +4,7 @@ const logger = require("./logger");
 const db = require("./db");
 const { configPath } = require("./config");
 const { startScheduler } = require("./scheduler");
+const { PORT } = require("./appConfig");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -30,7 +31,6 @@ app.use((err, req, res, _next) => {
   res.status(err.status || 500).json({ error: err.message || "Internal server error" });
 });
 
-const PORT = process.env.PORT || 33001;
 const server = app.listen(PORT, () => {
   logger.info({ port: PORT }, "invenchecker started");
 });

@@ -4,10 +4,7 @@ const db = require('./db');
 const logger = require('./logger');
 const { readConfig } = require('./config');
 const { fetchInventory, fetchPrice, sleep } = require('./steam');
-
-const PRICE_RATE_LIMIT_MS = 1100;
-const SPIKE_THRESHOLD = 1.15;
-const SEVEN_DAYS_SECS = 7 * 24 * 60 * 60;
+const { PRICE_RATE_LIMIT_MS, SPIKE_THRESHOLD, SEVEN_DAYS_SECS } = require('./appConfig');
 
 const upsertInvItem = db.prepare(`
   INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen)

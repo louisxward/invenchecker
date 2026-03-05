@@ -5,7 +5,7 @@ info:
   description: Steam inventory checker and price alert service
 
 servers:
-  - url: http://localhost:3000
+  - url: http://localhost:33001
 
 tags:
   - name: health

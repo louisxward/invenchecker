@@ -3,8 +3,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-
-const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/invenchecker.db');
+const { DB_PATH: dbPath } = require('./appConfig');
 
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 

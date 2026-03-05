@@ -1,10 +1,8 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const logger = require('./logger');
-
-const configPath = process.env.CONFIG_PATH || path.join(__dirname, '../data/accounts.json');
+const { ACCOUNTS_PATH: configPath } = require('./appConfig');
 
 function readConfig() {
   try {

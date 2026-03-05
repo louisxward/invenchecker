@@ -1,9 +1,6 @@
 "use strict";
 
-const INVENTORY_URL_1 = "https://steamcommunity.com/inventory";
-const INVENTORY_URL_2 = "2?l=english&count=2";
-const PRICE_URL = "https://steamcommunity.com/market/priceoverview";
-const APP_ID = 730;
+const { STEAM_APP_ID: APP_ID, STEAM_INVENTORY_URL, STEAM_PRICE_URL } = require("./appConfig");
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,7 +34,7 @@ function buildHeaders() {
 }
 
 async function fetchInventory(steam64id) {
-  const url = `${INVENTORY_URL_1}/${steam64id}/${APP_ID}/${INVENTORY_URL_2}`;
+  const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=2`;
   const headers = buildHeaders();
   headers["Referer"] = `https://steamcommunity.com/profiles/${steam64id}/inventory/`;
 
@@ -63,7 +60,7 @@ async function fetchInventory(steam64id) {
 }
 
 async function fetchPrice(marketHashName) {
-  const url = `${PRICE_URL}/?appid=${APP_ID}&currency=1&market_hash_name=${encodeURIComponent(marketHashName)}`;
+  const url = `${STEAM_PRICE_URL}/?appid=${APP_ID}&currency=1&market_hash_name=${encodeURIComponent(marketHashName)}`;
   const res = await fetch(url, { headers: buildHeaders() });
 
   if (res.status === 429) {
