@@ -123,7 +123,7 @@ curl -X POST http://localhost:3000/alerts/scan
 | Variable      | Default                     | Description                          |
 | ------------- | --------------------------- | ------------------------------------ |
 | `NODE_ENV`    | `production`                | Set to `development` for pretty logs |
-| `PORT`        | `3000`                      | HTTP port                            |
+| `PORT`        | `33001`                     | HTTP port                            |
 | `LOG_LEVEL`   | `info`                      | Pino log level                       |
 | `DB_PATH`     | `/app/data/invenchecker.db` | SQLite file path                     |
 | `CONFIG_PATH` | `/app/data/accounts.json`   | Accounts config path                 |
