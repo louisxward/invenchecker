@@ -2,11 +2,11 @@ services:
   invenchecker:
     build: .
     ports:
-      - "3000:3000"
+      - "33001:33001"
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      PORT: 3000
+      PORT: 33001
       LOG_LEVEL: info
       DB_PATH: /app/data/invenchecker.db
       CONFIG_PATH: /app/data/accounts.json
