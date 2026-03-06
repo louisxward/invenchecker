@@ -16,9 +16,11 @@ mkdir -p data
 docker compose up --build
 ```
 
-The app runs on port **3000**.
+The app runs on port **33001**.
 
 ## Configuration
+
+### accounts.json
 
 Accounts are stored in `data/accounts.json`. You can edit this file directly or use the API. The file is mounted as a Docker volume so changes persist across container restarts.
 
@@ -28,10 +30,10 @@ Example:
 [
   {
     "uid": "a1b2c3d4e5f6a7b8",
-    "friendlyName": "My Account",
-    "discordId": "123456789012345678",
-    "steam64ids": ["76561198000000000"],
-    "customItems": ["AK-47 | Redline (Field-Tested)", "AWP | Dragon Lore (Factory New)"]
+    ?"friendlyName": "My Account",
+    ?"discordId": "123456789012345678",
+    ?"steam64ids": ["76561198000000000"],
+    ?"customItems": ["AK-47 | Redline (Field-Tested)", "AWP | Dragon Lore (Factory New)"]
   }
 ]
 ```
@@ -120,13 +122,18 @@ curl -X POST http://localhost:33001/alerts/scan
 
 ## Environment Variables
 
-| Variable      | Default                     | Description                          |
-| ------------- | --------------------------- | ------------------------------------ |
-| `NODE_ENV`    | `production`                | Set to `development` for pretty logs |
-| `PORT`        | `33001`                     | HTTP port                            |
-| `LOG_LEVEL`   | `info`                      | Pino log level                       |
-| `DB_PATH`     | `/app/data/invenchecker.db` | SQLite file path                     |
-| `CONFIG_PATH` | `/app/data/accounts.json`   | Accounts config path                 |
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `PORT` | `33001` | No | Port the server listens on |
+| `DB_PATH` | `<DATA_DIR>/invenchecker.db` | No | Path to the SQLite database file |
+| `CONFIG_PATH` | `<DATA_DIR>/accounts.json` | No | Path to the accounts config file |
+| `LOG_LEVEL` | `info` | No | Logging level |
+| `PRICE_RATE_LIMIT_MS` | `1100` | No | Minimum milliseconds between price API requests |
+| `SPIKE_THRESHOLD` | `1.15` | No | Price spike multiplier threshold (e.g. 1.15 = 15% increase) |
+| `SEVEN_DAYS_SECS` | `604800` | No | Duration in seconds representing 7 days |
+| `SCAN_CRON` | `0 */6 * * *` | No | Cron expression for inventory scan schedule |
+| `STEAM_APP_ID` | `730` | No | Steam App ID to check inventory for (730 = CS2) |
+
 
 ## Local Development (without Docker)
 
