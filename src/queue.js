@@ -3,7 +3,7 @@
 const logger = require('./logger');
 const { readConfig } = require('./config');
 const { sleep } = require('./steam');
-const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS } = require('./appConfig');
+const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS, INVENTORY_RATE_LIMIT_MS } = require('./appConfig');
 const { processInventoryForSteamId, processPriceForItem } = require('./scanner');
 
 // Two FIFO queues keyed by their natural identifier (steam64id / itemName).
@@ -42,6 +42,7 @@ async function inventoryWorker() {
       logger.error({ err, steam64id }, 'Unexpected error in inventory worker');
     }
 
+    await sleep(INVENTORY_RATE_LIMIT_MS);
     setTimeout(() => enqueueInventory(steam64id), REENQUEUE_DELAY_MS);
   }
 }
@@ -60,10 +61,9 @@ async function priceWorker() {
       await processPriceForItem(itemName);
     } catch (err) {
       logger.error({ err, itemName }, 'Unexpected error in price worker');
-      // Still rate-limit even on unexpected errors
-      await sleep(PRICE_RATE_LIMIT_MS);
     }
 
+    await sleep(PRICE_RATE_LIMIT_MS);
     setTimeout(() => enqueuePrice(itemName), REENQUEUE_DELAY_MS);
   }
 }

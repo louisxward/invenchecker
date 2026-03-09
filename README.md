@@ -134,6 +134,7 @@ Alerts are exposed via `GET /alerts` for polling.
 | `CONFIG_PATH` | `<DATA_DIR>/accounts.json` | No | Path to the accounts config file |
 | `LOG_LEVEL` | `info` | No | Logging level |
 | `PRICE_RATE_LIMIT_MS` | `1100` | No | Minimum milliseconds between price API requests |
+| `INVENTORY_RATE_LIMIT_MS` | `3000` | No | Minimum milliseconds between inventory API requests |
 | `SPIKE_THRESHOLD` | `1.15` | No | Price spike multiplier threshold (e.g. 1.15 = 15% increase) |
 | `SEVEN_DAYS_SECS` | `604800` | No | Duration in seconds representing 7 days |
 | `REENQUEUE_DELAY_MS` | `21600000` | No | Milliseconds between re-scans of each item (default 6 hours) |

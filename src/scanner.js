@@ -3,8 +3,8 @@
 const db = require('./db');
 const logger = require('./logger');
 const { readConfig } = require('./config');
-const { fetchInventory, fetchPrice, sleep } = require('./steam');
-const { PRICE_RATE_LIMIT_MS, SPIKE_THRESHOLD, SEVEN_DAYS_SECS } = require('./appConfig');
+const { fetchInventory, fetchPrice } = require('./steam');
+const { SPIKE_THRESHOLD, SEVEN_DAYS_SECS } = require('./appConfig');
 
 const upsertInvItem = db.prepare(`
   INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen)
@@ -110,7 +110,6 @@ async function processPriceForItem(itemName) {
     } else {
       logger.error({ err, itemName }, 'Failed to fetch price (rate limited), skipping');
     }
-    await sleep(PRICE_RATE_LIMIT_MS);
     return;
   }
 
@@ -136,8 +135,6 @@ async function processPriceForItem(itemName) {
   `).run(itemId, priceData.lowest_price, priceData.median_price, priceData.volume, scanTime);
 
   logger.info({ itemName, lowest_price: priceData.lowest_price }, 'Price snapshot recorded');
-
-  await sleep(PRICE_RATE_LIMIT_MS);
 
   const sevenDayLow = row && row.seven_day_low;
 
