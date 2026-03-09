@@ -8,6 +8,7 @@ const { fetchInventory } = require("../steam");
 const db = require("../db");
 const logger = require("../logger");
 const { enqueueInventory, enqueuePrice } = require("../queue");
+const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS } = require("../appConfig");
 
 function getAccount(uid) {
   const accounts = readConfig();
@@ -27,6 +28,12 @@ router.post("/", (req, res) => {
 
   if (!friendlyName || !discordId || !Array.isArray(steam64ids) || steam64ids.length === 0) {
     return res.status(400).json({ error: "friendlyName, discordId, and steam64ids[] are required" });
+  }
+  if (steam64ids.length > MAX_STEAM64IDS) {
+    return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
+  }
+  if (customItems.length > MAX_CUSTOM_ITEMS) {
+    return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
   }
 
   const accounts = readConfig();
@@ -83,6 +90,12 @@ router.put("/:uid", (req, res) => {
   if (!account) return res.status(404).json({ error: "Account not found" });
 
   const idx = accounts.findIndex((a) => a.uid === req.params.uid);
+  if (req.body.steam64ids !== undefined && req.body.steam64ids.length > MAX_STEAM64IDS) {
+    return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
+  }
+  if (req.body.customItems !== undefined && req.body.customItems.length > MAX_CUSTOM_ITEMS) {
+    return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
+  }
   if (req.body.friendlyName !== undefined) accounts[idx].friendlyName = req.body.friendlyName;
   if (req.body.discordId !== undefined) accounts[idx].discordId = req.body.discordId;
   if (req.body.steam64ids !== undefined) accounts[idx].steam64ids = req.body.steam64ids;
@@ -121,6 +134,9 @@ router.post("/:uid/steam64ids", (req, res) => {
 
   const idx = accounts.findIndex(a => a.uid === req.params.uid);
   if (!accounts[idx].steam64ids.includes(steam64id)) {
+    if (accounts[idx].steam64ids.length >= MAX_STEAM64IDS) {
+      return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
+    }
     accounts[idx].steam64ids.push(steam64id);
     writeConfig(accounts);
   }
@@ -151,6 +167,9 @@ router.post("/:uid/customItems", (req, res) => {
 
   const idx = accounts.findIndex(a => a.uid === req.params.uid);
   if (!accounts[idx].customItems.includes(item)) {
+    if (accounts[idx].customItems.length >= MAX_CUSTOM_ITEMS) {
+      return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
+    }
     accounts[idx].customItems.push(item);
     writeConfig(accounts);
   }
