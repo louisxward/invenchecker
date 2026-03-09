@@ -55,14 +55,13 @@ router.put('/user/:uid/resolve-all', (req, res) => {
   res.json({ resolved: changes });
 });
 
-// POST /scan — run scan synchronously, return all unresolved recipients grouped by uid
+// POST /scan — enqueue all accounts for scanning, returns immediately
 router.post('/scan', async (req, res) => {
   try {
     await runScan();
-    const alerts = db.prepare(`${ALERT_SELECT} ORDER BY a.created_at DESC`).all();
-    res.json({ message: 'Scan complete', alerts });
+    res.json({ message: 'Scan enqueued', queuedAt: Math.floor(Date.now() / 1000) });
   } catch (err) {
-    logger.error({ err }, 'Manual scan failed');
+    logger.error({ err }, 'Manual scan enqueue failed');
     res.status(500).json({ error: err.message });
   }
 });

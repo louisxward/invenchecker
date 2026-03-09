@@ -12,7 +12,8 @@ module.exports = {
   PRICE_RATE_LIMIT_MS: process.env.PRICE_RATE_LIMIT_MS ? Number(process.env.PRICE_RATE_LIMIT_MS) : 1100,
   SPIKE_THRESHOLD: process.env.SPIKE_THRESHOLD ? Number(process.env.SPIKE_THRESHOLD) : 1.15,
   SEVEN_DAYS_SECS: process.env.SEVEN_DAYS_SECS ? Number(process.env.SEVEN_DAYS_SECS) : 7 * 24 * 60 * 60,
-  SCAN_CRON: process.env.SCAN_CRON || "0 */6 * * *",
+  WORKER_IDLE_SLEEP_MS: process.env.WORKER_IDLE_SLEEP_MS ? Number(process.env.WORKER_IDLE_SLEEP_MS) : 500,
+  REENQUEUE_DELAY_MS: process.env.REENQUEUE_DELAY_MS ? Number(process.env.REENQUEUE_DELAY_MS) : 6 * 60 * 60 * 1000,
   STEAM_APP_ID: process.env.STEAM_APP_ID ? Number(process.env.STEAM_APP_ID) : 730,
   STEAM_INVENTORY_URL: "https://steamcommunity.com/inventory",
   STEAM_PRICE_URL: "https://steamcommunity.com/market/priceoverview"

@@ -7,6 +7,7 @@ const { readConfig, writeConfig } = require("../config");
 const { fetchInventory } = require("../steam");
 const db = require("../db");
 const logger = require("../logger");
+const { enqueueInventory, enqueuePrice } = require("../queue");
 
 function getAccount(uid) {
   const accounts = readConfig();
@@ -37,6 +38,9 @@ router.post("/", (req, res) => {
   const account = { uid, friendlyName, discordId, steam64ids, customItems };
   accounts.push(account);
   writeConfig(accounts);
+
+  for (const id of steam64ids) enqueueInventory(id);
+  for (const item of customItems) enqueuePrice(item);
 
   logger.info({ uid, friendlyName, discordId }, "Account added");
   res.status(201).json(account);
@@ -85,6 +89,13 @@ router.put("/:uid", (req, res) => {
   if (req.body.customItems !== undefined) accounts[idx].customItems = req.body.customItems;
   writeConfig(accounts);
 
+  if (req.body.steam64ids !== undefined) {
+    for (const id of accounts[idx].steam64ids) enqueueInventory(id);
+  }
+  if (req.body.customItems !== undefined) {
+    for (const item of accounts[idx].customItems) enqueuePrice(item);
+  }
+
   res.json(accounts[idx]);
 });
 
@@ -113,6 +124,7 @@ router.post("/:uid/steam64ids", (req, res) => {
     accounts[idx].steam64ids.push(steam64id);
     writeConfig(accounts);
   }
+  enqueueInventory(steam64id);
   res.json(accounts[idx]);
 });
 
@@ -142,6 +154,7 @@ router.post("/:uid/customItems", (req, res) => {
     accounts[idx].customItems.push(item);
     writeConfig(accounts);
   }
+  enqueuePrice(item);
   res.json(accounts[idx]);
 });
 

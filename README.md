@@ -4,7 +4,7 @@ Version: 0.0.1
 
 Publisher: ChowIndustries
 
-CS2 inventory price tracker. Monitors Steam inventories for tracked items, records price snapshots every 6 hours, and alerts when a price spikes 15%+ over its 7-day low.
+CS2 inventory price tracker. Monitors Steam inventories for tracked items, records price snapshots continuously, and alerts when a price spikes 15%+ over its 7-day low.
 
 ## Quick Start
 
@@ -46,7 +46,7 @@ Example:
 
 | Method | Path      | Description                                                        |
 | ------ | --------- | ------------------------------------------------------------------ |
-| GET    | `/health` | Returns `{"status":"ok","lastScannedAt":<unix>,"lastScanMs":<ms>}` |
+| GET    | `/health` | Returns status, last manual scan time, and current queue depths |
 
 ### Accounts
 
@@ -74,7 +74,7 @@ Example:
 | GET    | `/alerts/user/:uid`              | Unresolved alerts for a specific account UID                  |
 | PUT    | `/alerts/recipients/:id/resolve` | Resolve a single alert recipient row                          |
 | PUT    | `/alerts/user/:uid/resolve-all`  | Resolve all unresolved alerts for a UID                       |
-| POST   | `/alerts/scan`                   | Run a full scan immediately (synchronous, returns all alerts) |
+| POST   | `/alerts/scan`                   | Enqueue all accounts for scanning immediately (returns instantly) |
 
 ### Example Requests
 
@@ -114,11 +114,16 @@ curl -X POST http://localhost:33001/alerts/scan
 
 ## How It Works
 
-1. Every 6 hours (00:00, 06:00, 12:00, 18:00) the scanner runs for all configured accounts.
-2. For each account's `customItems`, it fetches the current price from the Steam Community Market.
-3. Each price is stored as a snapshot in SQLite.
-4. If the current price is >= 15% above the 7-day low, an alert is created and logged at `WARN` level.
-5. Alerts are exposed via `GET /alerts` for polling.
+Two queues run continuously in the background:
+
+- **Inventory queue** — fetches each Steam64 ID's inventory, upserts items to the DB, and feeds found items into the price queue.
+- **Price queue** — fetches the current market price for each item (rate-limited to ~1 req/sec), records a snapshot, and creates an alert if the price is ≥ 15% above its 7-day low.
+
+After each item is processed it is automatically re-enqueued to run again **6 hours later**.
+
+When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run.
+
+Alerts are exposed via `GET /alerts` for polling.
 
 ## Environment Variables
 
@@ -131,7 +136,8 @@ curl -X POST http://localhost:33001/alerts/scan
 | `PRICE_RATE_LIMIT_MS` | `1100` | No | Minimum milliseconds between price API requests |
 | `SPIKE_THRESHOLD` | `1.15` | No | Price spike multiplier threshold (e.g. 1.15 = 15% increase) |
 | `SEVEN_DAYS_SECS` | `604800` | No | Duration in seconds representing 7 days |
-| `SCAN_CRON` | `0 */6 * * *` | No | Cron expression for inventory scan schedule |
+| `REENQUEUE_DELAY_MS` | `21600000` | No | Milliseconds between re-scans of each item (default 6 hours) |
+| `WORKER_IDLE_SLEEP_MS` | `500` | No | Milliseconds workers sleep when their queue is empty |
 | `STEAM_APP_ID` | `730` | No | Steam App ID to check inventory for (730 = CS2) |
 
 

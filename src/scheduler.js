@@ -1,17 +1,12 @@
 'use strict';
 
-const cron = require('node-cron');
+const { startQueues } = require('./queue');
 const logger = require('./logger');
-const { runScan } = require('./scanner');
-const { SCAN_CRON } = require('./appConfig');
 
 function startScheduler() {
-  const task = cron.schedule(SCAN_CRON, () => {
-    runScan().catch((err) => logger.error({ err }, 'Scheduled scan failed'));
-  });
-
-  logger.info('Scheduler started — scans run every 6 hours');
-  return task;
+  startQueues();
+  logger.info('Scheduler started — queue workers running continuously');
+  return { stop() {} };
 }
 
 module.exports = { startScheduler };
