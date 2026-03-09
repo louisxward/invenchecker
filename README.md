@@ -138,6 +138,7 @@ Alerts are exposed via `GET /alerts` for polling.
 | `SPIKE_THRESHOLD` | `1.15` | No | Price spike multiplier threshold (e.g. 1.15 = 15% increase) |
 | `SEVEN_DAYS_SECS` | `604800` | No | Duration in seconds representing 7 days |
 | `REENQUEUE_DELAY_MS` | `21600000` | No | Milliseconds between re-scans of each item (default 6 hours) |
+| `QUEUE_WARN_SIZE` | `50` | No | Log a warning when a queue reaches this many pending items |
 | `WORKER_IDLE_SLEEP_MS` | `500` | No | Milliseconds workers sleep when their queue is empty |
 | `STEAM_APP_ID` | `730` | No | Steam App ID to check inventory for (730 = CS2) |
 

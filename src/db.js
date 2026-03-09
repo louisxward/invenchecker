@@ -153,6 +153,16 @@ db.exec(`
     added_at INTEGER NOT NULL,
     PRIMARY KEY (type, value)
   );
+
+  CREATE TABLE IF NOT EXISTS inventory_fetches (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    steam64id   TEXT    NOT NULL,
+    item_count  INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    fetched_at  INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_inv_fetches ON inventory_fetches(steam64id, fetched_at);
 `);
 
 // ── In-memory name→id cache ───────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 const logger = require('./logger');
 const { readConfig } = require('./config');
 const { sleep } = require('./steam');
-const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS, INVENTORY_RATE_LIMIT_MS } = require('./appConfig');
+const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS, INVENTORY_RATE_LIMIT_MS, QUEUE_WARN_SIZE } = require('./appConfig');
 const { processInventoryForSteamId, processPriceForItem } = require('./scanner');
 
 // Two FIFO queues keyed by their natural identifier (steam64id / itemName).
@@ -14,15 +14,24 @@ const priceQueue = new Map();     // itemName  -> true
 
 let workersStarted = false;
 
+function warnIfPressured(queue, rateLimitMs, label) {
+  const size = queue.size;
+  if (size < QUEUE_WARN_SIZE) return;
+  const etaSecs = Math.round((size * rateLimitMs) / 1000);
+  logger.warn({ queueSize: size, etaSecs }, `${label} queue is backed up`);
+}
+
 function enqueueInventory(steam64id) {
   if (inventoryQueue.has(steam64id)) return;
   inventoryQueue.set(steam64id, true);
+  warnIfPressured(inventoryQueue, INVENTORY_RATE_LIMIT_MS, 'Inventory');
   logger.debug({ steam64id }, 'Enqueued inventory fetch');
 }
 
 function enqueuePrice(itemName) {
   if (priceQueue.has(itemName)) return;
   priceQueue.set(itemName, true);
+  warnIfPressured(priceQueue, PRICE_RATE_LIMIT_MS, 'Price');
   logger.debug({ itemName }, 'Enqueued price fetch');
 }
 

@@ -63,10 +63,15 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
   }
 
   let descriptions;
+  const fetchStart = Date.now();
   try {
     logger.info({ steam64id }, 'Fetching inventory');
     descriptions = await fetchInventory(steam64id);
-    logger.info({ steam64id, itemCount: descriptions.length }, 'Inventory fetched');
+    const durationMs = Date.now() - fetchStart;
+    logger.info({ steam64id, itemCount: descriptions.length, durationMs }, 'Inventory fetched');
+    db.prepare(
+      'INSERT INTO inventory_fetches (steam64id, item_count, duration_ms, fetched_at) VALUES (?, ?, ?, ?)'
+    ).run(steam64id, descriptions.length, durationMs, Math.floor(Date.now() / 1000));
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
     if (!isRateLimit) {
