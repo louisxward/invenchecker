@@ -7,8 +7,8 @@ const { readConfig, writeConfig } = require("../config");
 const { fetchInventory } = require("../steam");
 const db = require("../db");
 const logger = require("../logger");
-const { enqueueInventory, enqueuePrice } = require("../queue");
-const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS } = require("../appConfig");
+const { enqueueInventory, enqueuePrice, isInventoryQueued, isPriceQueued } = require("../queue");
+const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require("../appConfig");
 
 function getAccount(uid) {
   const accounts = readConfig();
@@ -248,6 +248,54 @@ router.get("/:uid/summary", (req, res) => {
   }));
 
   res.json({ uid: account.uid, friendlyName: account.friendlyName, steam64ids, customItems });
+});
+
+// GET /accounts/:uid/progress — scan state per steam64id and custom item
+router.get("/:uid/progress", (req, res) => {
+  const { account } = getAccount(req.params.uid);
+  if (!account) return res.status(404).json({ error: "Account not found" });
+
+  const reenqueueDelaySecs = Math.floor(REENQUEUE_DELAY_MS / 1000);
+
+  const lastFetchStmt = db.prepare(`
+    SELECT item_count, duration_ms, fetched_at
+    FROM inventory_fetches
+    WHERE steam64id = ?
+    ORDER BY fetched_at DESC
+    LIMIT 1
+  `);
+
+  const steam64ids = {};
+  for (const id of (account.steam64ids || [])) {
+    const queued = isInventoryQueued(id);
+    const lastFetch = lastFetchStmt.get(id) ?? null;
+    steam64ids[id] = {
+      queued,
+      lastFetch,
+      nextScanAt: (!queued && lastFetch) ? lastFetch.fetched_at + reenqueueDelaySecs : null,
+    };
+  }
+
+  const lastPriceStmt = db.prepare(`
+    SELECT ps.lowest_price, ps.captured_at
+    FROM price_snapshots ps
+    WHERE ps.item_id = (SELECT id FROM item_names WHERE name = ?)
+    ORDER BY ps.captured_at DESC
+    LIMIT 1
+  `);
+
+  const customItems = {};
+  for (const name of (account.customItems || [])) {
+    const queued = isPriceQueued(name);
+    const lastPrice = lastPriceStmt.get(name) ?? null;
+    customItems[name] = {
+      queued,
+      lastPrice,
+      nextScanAt: (!queued && lastPrice) ? lastPrice.captured_at + reenqueueDelaySecs : null,
+    };
+  }
+
+  res.json({ uid: account.uid, steam64ids, customItems });
 });
 
 // GET /accounts/:uid/prices

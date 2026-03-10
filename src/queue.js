@@ -104,4 +104,7 @@ function getQueueState() {
   };
 }
 
-module.exports = { enqueueInventory, enqueuePrice, startQueues, getQueueState };
+function isInventoryQueued(steam64id) { return inventoryQueue.has(steam64id); }
+function isPriceQueued(itemName) { return priceQueue.has(itemName); }
+
+module.exports = { enqueueInventory, enqueuePrice, startQueues, getQueueState, isInventoryQueued, isPriceQueued };

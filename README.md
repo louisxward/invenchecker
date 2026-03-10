@@ -65,6 +65,7 @@ Example:
 | GET    | `/accounts/:uid/inventory`         | Fetch live Steam inventory (all steam64ids merged)                            |
 | GET    | `/accounts/:uid/summary`           | Inventory items per Steam64 ID + custom items, each with latest price         |
 | GET    | `/accounts/:uid/prices`            | Price history (`?item=<name>&days=7`)                                         |
+| GET    | `/accounts/:uid/progress`          | Scan state per steam64id and custom item (queued, last fetch/price, next scan) |
 
 ### Alerts & Scanning
 
