@@ -214,6 +214,42 @@ describe('Scanner', () => {
       expect(alert).toBeUndefined();
     });
 
+    it('suppresses duplicate alert when price has not risen 5% above last alert price', async () => {
+      setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
+      const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
+      // Insert a prior alert at $12.00
+      db.prepare(
+        'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(itemId, 20.0, 12.0, 10.0, Math.floor(Date.now() / 1000) - 60);
+      // Current price $12.50 — spiking but < 5% above $12.00
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.50, median_price: 13.0, volume: 30 });
+
+      await processPriceForItem(ITEM_NAME);
+
+      const allAlerts = db.prepare(
+        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
+      ).all(ITEM_NAME);
+      expect(allAlerts).toHaveLength(1); // no new alert created
+    });
+
+    it('fires a new alert when price rises 5%+ above last alert price', async () => {
+      setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
+      const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
+      // Insert a prior alert at $12.00
+      db.prepare(
+        'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(itemId, 20.0, 12.0, 10.0, Math.floor(Date.now() / 1000) - 60);
+      // Current price $12.61 — more than 5% above $12.00
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.61, median_price: 13.0, volume: 30 });
+
+      await processPriceForItem(ITEM_NAME);
+
+      const allAlerts = db.prepare(
+        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
+      ).all(ITEM_NAME);
+      expect(allAlerts).toHaveLength(2); // new alert created
+    });
+
     it('does not create an alert when there is no 7-day price history', async () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       steam.fetchPrice.mockResolvedValue({ lowest_price: 50.0, median_price: 51.0, volume: 5 });

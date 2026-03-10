@@ -4,7 +4,7 @@ const db = require('./db');
 const logger = require('./logger');
 const { readConfig } = require('./config');
 const { fetchInventory, fetchPrice } = require('./steam');
-const { SPIKE_THRESHOLD, SEVEN_DAYS_SECS } = require('./appConfig');
+const { SPIKE_THRESHOLD, SEVEN_DAYS_SECS, ALERT_RESEND_THRESHOLD } = require('./appConfig');
 
 const upsertInvItem = db.prepare(`
   INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen)
@@ -144,6 +144,16 @@ async function processPriceForItem(itemName) {
   const sevenDayLow = row && row.seven_day_low;
 
   if (sevenDayLow && sevenDayLow > 0 && priceData.lowest_price >= sevenDayLow * SPIKE_THRESHOLD) {
+    const lastAlert = db.prepare(
+      'SELECT price_at_alert FROM alerts WHERE item_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).get(itemId);
+
+    if (lastAlert && priceData.lowest_price < lastAlert.price_at_alert * ALERT_RESEND_THRESHOLD) {
+      logger.info(
+        { itemName, currentPrice: priceData.lowest_price, lastAlertPrice: lastAlert.price_at_alert },
+        'Price spike still active but below re-alert threshold, skipping'
+      );
+    } else {
     const spikePct = ((priceData.lowest_price - sevenDayLow) / sevenDayLow) * 100;
 
     const alertId = db.prepare(`
@@ -162,6 +172,7 @@ async function processPriceForItem(itemName) {
       { itemName, spikePct: spikePct.toFixed(2), currentPrice: priceData.lowest_price, sevenDayLow },
       'Price spike alert: item price has spiked significantly'
     );
+    }
   }
 }
 

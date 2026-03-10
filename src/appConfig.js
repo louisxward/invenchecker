@@ -12,6 +12,7 @@ module.exports = {
   PRICE_RATE_LIMIT_MS: process.env.PRICE_RATE_LIMIT_MS ? Number(process.env.PRICE_RATE_LIMIT_MS) : 1100,
   INVENTORY_RATE_LIMIT_MS: process.env.INVENTORY_RATE_LIMIT_MS ? Number(process.env.INVENTORY_RATE_LIMIT_MS) : 3000,
   SPIKE_THRESHOLD: process.env.SPIKE_THRESHOLD ? Number(process.env.SPIKE_THRESHOLD) : 1.15,
+  ALERT_RESEND_THRESHOLD: process.env.ALERT_RESEND_THRESHOLD ? Number(process.env.ALERT_RESEND_THRESHOLD) : 1.05,
   SEVEN_DAYS_SECS: process.env.SEVEN_DAYS_SECS ? Number(process.env.SEVEN_DAYS_SECS) : 7 * 24 * 60 * 60,
   QUEUE_WARN_SIZE: process.env.QUEUE_WARN_SIZE ? Number(process.env.QUEUE_WARN_SIZE) : 50,
   WORKER_IDLE_SLEEP_MS: process.env.WORKER_IDLE_SLEEP_MS ? Number(process.env.WORKER_IDLE_SLEEP_MS) : 500,
