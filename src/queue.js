@@ -37,11 +37,17 @@ function enqueuePrice(itemName) {
 }
 
 async function inventoryWorker() {
+  let wasActive = false;
   while (true) {
     if (inventoryQueue.size === 0) {
+      if (wasActive) {
+        logger.info('Inventory queue drained');
+        wasActive = false;
+      }
       await sleep(WORKER_IDLE_SLEEP_MS);
       continue;
     }
+    wasActive = true;
 
     const [steam64id] = inventoryQueue.keys();
     inventoryQueue.delete(steam64id);
@@ -54,6 +60,7 @@ async function inventoryWorker() {
     }
 
     if (result === 'rate_limited') {
+      logger.info({ steam64id, retryInMs: RATE_LIMIT_RETRY_MS }, 'Inventory rate limited, pausing before retry');
       await sleep(RATE_LIMIT_RETRY_MS);
       enqueueInventory(steam64id);
     } else {
@@ -64,11 +71,17 @@ async function inventoryWorker() {
 }
 
 async function priceWorker() {
+  let wasActive = false;
   while (true) {
     if (priceQueue.size === 0) {
+      if (wasActive) {
+        logger.info('Price queue drained');
+        wasActive = false;
+      }
       await sleep(WORKER_IDLE_SLEEP_MS);
       continue;
     }
+    wasActive = true;
 
     const [itemName] = priceQueue.keys();
     priceQueue.delete(itemName);
@@ -81,6 +94,7 @@ async function priceWorker() {
     }
 
     if (result === 'rate_limited') {
+      logger.info({ itemName, retryInMs: RATE_LIMIT_RETRY_MS }, 'Price rate limited, pausing before retry');
       await sleep(RATE_LIMIT_RETRY_MS);
       enqueuePrice(itemName);
     } else {
