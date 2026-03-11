@@ -7,7 +7,7 @@ const { readConfig, writeConfig } = require("../config");
 const { fetchInventory } = require("../steam");
 const db = require("../db");
 const logger = require("../logger");
-const { enqueueInventory, enqueuePrice, isInventoryQueued, isPriceQueued } = require("../queue");
+const { enqueueInventory, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require("../queue");
 const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require("../appConfig");
 
 function getAccount(uid) {
@@ -295,7 +295,8 @@ router.get("/:uid/progress", (req, res) => {
     };
   }
 
-  res.json({ uid: account.uid, steam64ids, customItems });
+  const { inventoryQueueSize, priceQueueSize } = getQueueState();
+  res.json({ uid: account.uid, inventoryQueueSize, priceQueueSize, steam64ids, customItems });
 });
 
 // GET /accounts/:uid/prices

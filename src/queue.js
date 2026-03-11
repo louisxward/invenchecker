@@ -12,6 +12,7 @@ const db = require('./db');
 // A key present in the map means that item is pending — deduplication is free.
 const inventoryQueue = new Map(); // steam64id -> true
 const priceQueue = new Map();     // itemName  -> true
+const processingInventory = new Set(); // steam64ids currently being fetched
 
 let workersStarted = false;
 
@@ -53,10 +54,13 @@ async function inventoryWorker() {
     inventoryQueue.delete(steam64id);
 
     let result;
+    processingInventory.add(steam64id);
     try {
       result = await processInventoryForSteamId(steam64id, enqueuePrice);
     } catch (err) {
       logger.error({ err, steam64id }, 'Unexpected error in inventory worker');
+    } finally {
+      processingInventory.delete(steam64id);
     }
 
     if (result === 'rate_limited') {
@@ -152,12 +156,12 @@ function startQueues() {
 
 function getQueueState() {
   return {
-    inventoryQueueSize: inventoryQueue.size,
+    inventoryQueueSize: inventoryQueue.size + processingInventory.size,
     priceQueueSize: priceQueue.size,
   };
 }
 
-function isInventoryQueued(steam64id) { return inventoryQueue.has(steam64id); }
+function isInventoryQueued(steam64id) { return inventoryQueue.has(steam64id) || processingInventory.has(steam64id); }
 function isPriceQueued(itemName) { return priceQueue.has(itemName); }
 
 module.exports = { enqueueInventory, enqueuePrice, startQueues, getQueueState, isInventoryQueued, isPriceQueued };
