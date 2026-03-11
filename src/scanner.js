@@ -80,7 +80,7 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
     } else {
       logger.error({ err, steam64id }, 'Failed to fetch inventory (rate limited), skipping');
     }
-    return;
+    return isRateLimit ? 'rate_limited' : undefined;
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -115,7 +115,7 @@ async function processPriceForItem(itemName) {
     } else {
       logger.error({ err, itemName }, 'Failed to fetch price (rate limited), skipping');
     }
-    return;
+    return isRateLimit ? 'rate_limited' : undefined;
   }
 
   if (!priceData || priceData.lowest_price === null) {
@@ -145,33 +145,45 @@ async function processPriceForItem(itemName) {
 
   if (sevenDayLow && sevenDayLow > 0 && priceData.lowest_price >= sevenDayLow * SPIKE_THRESHOLD) {
     const lastAlert = db.prepare(
-      'SELECT price_at_alert FROM alerts WHERE item_id = ? ORDER BY created_at DESC LIMIT 1'
+      'SELECT price_at_alert, created_at FROM alerts WHERE item_id = ? ORDER BY created_at DESC LIMIT 1'
     ).get(itemId);
 
+    let shouldAlert = true;
     if (lastAlert && priceData.lowest_price < lastAlert.price_at_alert * ALERT_RESEND_THRESHOLD) {
-      logger.info(
-        { itemName, currentPrice: priceData.lowest_price, lastAlertPrice: lastAlert.price_at_alert },
-        'Price spike still active but below re-alert threshold, skipping'
-      );
-    } else {
-    const spikePct = ((priceData.lowest_price - sevenDayLow) / sevenDayLow) * 100;
+      const spikeReset = db.prepare(`
+        SELECT 1 FROM price_snapshots
+        WHERE item_id = ? AND captured_at > ? AND lowest_price < ? * ?
+        LIMIT 1
+      `).get(itemId, lastAlert.created_at, sevenDayLow, SPIKE_THRESHOLD);
 
-    const alertId = db.prepare(`
-      INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(itemId, spikePct, priceData.lowest_price, sevenDayLow, scanTime).lastInsertRowid;
-
-    const insertRecipient = db.prepare(
-      'INSERT OR IGNORE INTO alert_recipients (alert_id, uid) VALUES (?, ?)'
-    );
-    for (const uid of getUidsForItem(itemId)) {
-      insertRecipient.run(alertId, uid);
+      if (!spikeReset) {
+        shouldAlert = false;
+        logger.info(
+          { itemName, currentPrice: priceData.lowest_price, lastAlertPrice: lastAlert.price_at_alert },
+          'Price spike still active but below re-alert threshold, skipping'
+        );
+      }
     }
 
-    logger.warn(
-      { itemName, spikePct: spikePct.toFixed(2), currentPrice: priceData.lowest_price, sevenDayLow },
-      'Price spike alert: item price has spiked significantly'
-    );
+    if (shouldAlert) {
+      const spikePct = ((priceData.lowest_price - sevenDayLow) / sevenDayLow) * 100;
+
+      const alertId = db.prepare(`
+        INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(itemId, spikePct, priceData.lowest_price, sevenDayLow, scanTime).lastInsertRowid;
+
+      const insertRecipient = db.prepare(
+        'INSERT OR IGNORE INTO alert_recipients (alert_id, uid) VALUES (?, ?)'
+      );
+      for (const uid of getUidsForItem(itemId)) {
+        insertRecipient.run(alertId, uid);
+      }
+
+      logger.warn(
+        { itemName, spikePct: spikePct.toFixed(2), currentPrice: priceData.lowest_price, sevenDayLow },
+        'Price spike alert: item price has spiked significantly'
+      );
     }
   }
 }

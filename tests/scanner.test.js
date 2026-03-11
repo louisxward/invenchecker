@@ -123,6 +123,12 @@ describe('Scanner', () => {
       expect(db.isBad('steam64id', STEAM_ID)).toBe(false);
     });
 
+    it('returns rate_limited when inventory fetch is rate limited', async () => {
+      steam.fetchInventory.mockRejectedValue(new Error(`Rate limited fetching inventory for ${STEAM_ID}`));
+      const result = await processInventoryForSteamId(STEAM_ID, jest.fn());
+      expect(result).toBe('rate_limited');
+    });
+
     it('skips previously bad steam64ids', async () => {
       db.markBad('steam64id', STEAM_ID, 'manual');
       await processInventoryForSteamId(STEAM_ID, jest.fn());
@@ -159,6 +165,12 @@ describe('Scanner', () => {
       steam.fetchPrice.mockRejectedValue(new Error(`Rate limited fetching price for "${ITEM_NAME}"`));
       await processPriceForItem(ITEM_NAME);
       expect(db.isBad('item', ITEM_NAME)).toBe(false);
+    });
+
+    it('returns rate_limited when price fetch is rate limited', async () => {
+      steam.fetchPrice.mockRejectedValue(new Error(`Rate limited fetching price for "${ITEM_NAME}"`));
+      const result = await processPriceForItem(ITEM_NAME);
+      expect(result).toBe('rate_limited');
     });
 
     it('skips previously bad items', async () => {
@@ -248,6 +260,28 @@ describe('Scanner', () => {
         'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
       ).all(ITEM_NAME);
       expect(allAlerts).toHaveLength(2); // new alert created
+    });
+
+    it('re-alerts after spike reset when price dipped below threshold since last alert', async () => {
+      setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
+      const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
+      const alertTime = Math.floor(Date.now() / 1000) - 120;
+      // Insert a prior alert at $12.00
+      db.prepare(
+        'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(itemId, 20.0, 12.0, 10.0, alertTime);
+      // Insert a snapshot after the alert where price dropped below spike threshold ($10 * 1.15 = $11.50)
+      db.prepare('INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)')
+        .run(itemId, 11.0, 11.0, 50, alertTime + 60);
+      // Current price $12.10 — spiking again, < 5% above $12.00, but spike reset
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.10, median_price: 12.5, volume: 30 });
+
+      await processPriceForItem(ITEM_NAME);
+
+      const allAlerts = db.prepare(
+        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
+      ).all(ITEM_NAME);
+      expect(allAlerts).toHaveLength(2); // new alert fired because spike reset
     });
 
     it('does not create an alert when there is no 7-day price history', async () => {

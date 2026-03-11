@@ -17,6 +17,7 @@ module.exports = {
   QUEUE_WARN_SIZE: process.env.QUEUE_WARN_SIZE ? Number(process.env.QUEUE_WARN_SIZE) : 50,
   WORKER_IDLE_SLEEP_MS: process.env.WORKER_IDLE_SLEEP_MS ? Number(process.env.WORKER_IDLE_SLEEP_MS) : 500,
   REENQUEUE_DELAY_MS: process.env.REENQUEUE_DELAY_MS ? Number(process.env.REENQUEUE_DELAY_MS) : 6 * 60 * 60 * 1000,
+  RATE_LIMIT_RETRY_MS: process.env.RATE_LIMIT_RETRY_MS ? Number(process.env.RATE_LIMIT_RETRY_MS) : 60 * 1000,
   MAX_STEAM64IDS: process.env.MAX_STEAM64IDS ? Number(process.env.MAX_STEAM64IDS) : 10,
   MAX_CUSTOM_ITEMS: process.env.MAX_CUSTOM_ITEMS ? Number(process.env.MAX_CUSTOM_ITEMS) : 50,
   STEAM_APP_ID: process.env.STEAM_APP_ID ? Number(process.env.STEAM_APP_ID) : 730,

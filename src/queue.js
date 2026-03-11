@@ -3,8 +3,9 @@
 const logger = require('./logger');
 const { readConfig } = require('./config');
 const { sleep } = require('./steam');
-const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS, INVENTORY_RATE_LIMIT_MS, QUEUE_WARN_SIZE } = require('./appConfig');
+const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS, INVENTORY_RATE_LIMIT_MS, QUEUE_WARN_SIZE, RATE_LIMIT_RETRY_MS } = require('./appConfig');
 const { processInventoryForSteamId, processPriceForItem } = require('./scanner');
+const db = require('./db');
 
 // Two FIFO queues keyed by their natural identifier (steam64id / itemName).
 // Using Map preserves insertion order, giving FIFO semantics.
@@ -45,14 +46,20 @@ async function inventoryWorker() {
     const [steam64id] = inventoryQueue.keys();
     inventoryQueue.delete(steam64id);
 
+    let result;
     try {
-      await processInventoryForSteamId(steam64id, enqueuePrice);
+      result = await processInventoryForSteamId(steam64id, enqueuePrice);
     } catch (err) {
       logger.error({ err, steam64id }, 'Unexpected error in inventory worker');
     }
 
-    await sleep(INVENTORY_RATE_LIMIT_MS);
-    setTimeout(() => enqueueInventory(steam64id), REENQUEUE_DELAY_MS);
+    if (result === 'rate_limited') {
+      await sleep(RATE_LIMIT_RETRY_MS);
+      enqueueInventory(steam64id);
+    } else {
+      await sleep(INVENTORY_RATE_LIMIT_MS);
+      setTimeout(() => enqueueInventory(steam64id), REENQUEUE_DELAY_MS);
+    }
   }
 }
 
@@ -66,14 +73,20 @@ async function priceWorker() {
     const [itemName] = priceQueue.keys();
     priceQueue.delete(itemName);
 
+    let result;
     try {
-      await processPriceForItem(itemName);
+      result = await processPriceForItem(itemName);
     } catch (err) {
       logger.error({ err, itemName }, 'Unexpected error in price worker');
     }
 
-    await sleep(PRICE_RATE_LIMIT_MS);
-    setTimeout(() => enqueuePrice(itemName), REENQUEUE_DELAY_MS);
+    if (result === 'rate_limited') {
+      await sleep(RATE_LIMIT_RETRY_MS);
+      enqueuePrice(itemName);
+    } else {
+      await sleep(PRICE_RATE_LIMIT_MS);
+      setTimeout(() => enqueuePrice(itemName), REENQUEUE_DELAY_MS);
+    }
   }
 }
 
@@ -81,11 +94,37 @@ function startQueues() {
   if (workersStarted) return;
   workersStarted = true;
 
-  // Seed queues with all existing accounts
+  // Seed queues, respecting last scan time to avoid redundant scans on restart
   const accounts = readConfig();
+  const nowSec = Math.floor(Date.now() / 1000);
+
   for (const account of accounts) {
-    for (const id of (account.steam64ids || [])) enqueueInventory(id);
-    for (const item of (account.customItems || [])) enqueuePrice(item);
+    for (const steam64id of (account.steam64ids || [])) {
+      const row = db.prepare('SELECT MAX(fetched_at) AS last FROM inventory_fetches WHERE steam64id = ?').get(steam64id);
+      const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
+      if (elapsedMs >= REENQUEUE_DELAY_MS) {
+        enqueueInventory(steam64id);
+      } else {
+        const resumeInMs = REENQUEUE_DELAY_MS - elapsedMs;
+        setTimeout(() => enqueueInventory(steam64id), resumeInMs);
+        logger.info({ steam64id, resumeInMs }, 'Inventory scan not yet due, scheduling');
+      }
+    }
+
+    for (const item of (account.customItems || [])) {
+      const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(item)?.id;
+      const row = itemId
+        ? db.prepare('SELECT MAX(captured_at) AS last FROM price_snapshots WHERE item_id = ?').get(itemId)
+        : null;
+      const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
+      if (elapsedMs >= REENQUEUE_DELAY_MS) {
+        enqueuePrice(item);
+      } else {
+        const resumeInMs = REENQUEUE_DELAY_MS - elapsedMs;
+        setTimeout(() => enqueuePrice(item), resumeInMs);
+        logger.info({ item, resumeInMs }, 'Price scan not yet due, scheduling');
+      }
+    }
   }
 
   logger.info(

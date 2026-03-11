@@ -1,6 +1,6 @@
 "use strict";
 
-const { STEAM_APP_ID: APP_ID, STEAM_INVENTORY_URL, STEAM_PRICE_URL } = require("./appConfig");
+const { STEAM_APP_ID: APP_ID, STEAM_INVENTORY_URL, STEAM_PRICE_URL, INVENTORY_RATE_LIMIT_MS } = require("./appConfig");
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,29 +34,40 @@ function buildHeaders() {
 }
 
 async function fetchInventory(steam64id) {
-  const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=2`;
   const headers = buildHeaders();
   headers["Referer"] = `https://steamcommunity.com/profiles/${steam64id}/inventory/`;
 
-  const res = await fetch(url, { headers });
+  const descriptions = [];
+  let cursor = "";
 
-  if (res.status === 400 || res.status === 403) {
-    throw new Error(`Cannot access inventory for ${steam64id}`);
-  }
-  if (res.status === 429) {
-    throw new Error(`Rate limited fetching inventory for ${steam64id}`);
-  }
-  if (!res.ok) {
-    throw new Error(`Failed to fetch inventory for ${steam64id}: HTTP ${res.status}`);
+  while (true) {
+    const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=100${cursor ? `&start_assetid=${cursor}` : ""}`;
+    const res = await fetch(url, { headers });
+
+    if (res.status === 400 || res.status === 403) {
+      throw new Error(`Cannot access inventory for ${steam64id}`);
+    }
+    if (res.status === 429) {
+      throw new Error(`Rate limited fetching inventory for ${steam64id}`);
+    }
+    if (!res.ok) {
+      throw new Error(`Failed to fetch inventory for ${steam64id}: HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+
+    if (!data.success) {
+      throw new Error(`Steam returned success=false for inventory ${steam64id}`);
+    }
+
+    descriptions.push(...(data.descriptions || []));
+
+    if (!data.more_items) break;
+    cursor = data.last_assetid;
+    await sleep(INVENTORY_RATE_LIMIT_MS);
   }
 
-  const data = await res.json();
-
-  if (!data.success) {
-    throw new Error(`Steam returned success=false for inventory ${steam64id}`);
-  }
-
-  return data.descriptions || [];
+  return descriptions;
 }
 
 async function fetchPrice(marketHashName) {
