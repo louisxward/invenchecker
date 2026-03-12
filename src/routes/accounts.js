@@ -16,6 +16,10 @@ function getAccount(uid) {
   return { accounts, account };
 }
 
+function isValidSteam64id(id) {
+  return typeof id === 'string' && /^7656119\d{10}$/.test(id);
+}
+
 // GET /accounts
 router.get("/", (req, res) => {
   const accounts = readConfig();
@@ -31,6 +35,10 @@ router.post("/", (req, res) => {
   }
   if (steam64ids.length > MAX_STEAM64IDS) {
     return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
+  }
+  const invalidId = steam64ids.find(id => !isValidSteam64id(id));
+  if (invalidId) {
+    return res.status(400).json({ error: `Invalid steam64id: ${invalidId}` });
   }
   if (customItems.length > MAX_CUSTOM_ITEMS) {
     return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
@@ -93,6 +101,10 @@ router.put("/:uid", (req, res) => {
   if (req.body.steam64ids !== undefined && req.body.steam64ids.length > MAX_STEAM64IDS) {
     return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
   }
+  if (req.body.steam64ids !== undefined) {
+    const invalidId = req.body.steam64ids.find(id => !isValidSteam64id(id));
+    if (invalidId) return res.status(400).json({ error: `Invalid steam64id: ${invalidId}` });
+  }
   if (req.body.customItems !== undefined && req.body.customItems.length > MAX_CUSTOM_ITEMS) {
     return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
   }
@@ -131,6 +143,7 @@ router.post("/:uid/steam64ids", (req, res) => {
   if (!account) return res.status(404).json({ error: "Account not found" });
   const { steam64id } = req.body;
   if (!steam64id) return res.status(400).json({ error: "steam64id is required" });
+  if (!isValidSteam64id(steam64id)) return res.status(400).json({ error: `Invalid steam64id: ${steam64id}` });
 
   const idx = accounts.findIndex(a => a.uid === req.params.uid);
   if (!accounts[idx].steam64ids.includes(steam64id)) {
