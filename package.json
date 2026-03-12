@@ -1,6 +1,6 @@
 {
   "name": "invenchecker",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "CS2 inventory price tracker",
   "main": "src/index.js",
   "scripts": {

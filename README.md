@@ -1,6 +1,6 @@
 # invenchecker
 
-Version: 0.0.1
+Version: 1.0.0
 
 Publisher: ChowIndustries
 
@@ -46,11 +46,11 @@ Example:
 
 Controls scan interval and alert thresholds per price tier. Rules are evaluated highest-first; the first rule whose `minPrice` is ≤ the item's current price applies.
 
-| Field | Description |
-|---|---|
-| `minPrice` | Minimum item price (in configured currency) to apply this rule |
-| `scanHours` | Re-scan interval in hours |
-| `alertPct` | % above 7-day low to trigger an alert |
+| Field        | Description                                                       |
+| ------------ | ----------------------------------------------------------------- |
+| `minPrice`   | Minimum item price (in configured currency) to apply this rule    |
+| `scanHours`  | Re-scan interval in hours                                         |
+| `alertPct`   | % above 7-day low to trigger an alert                             |
 | `realertPct` | % above 7-day low to allow a re-alert within the same spike event |
 
 Default (`data/rules.json`):
@@ -58,8 +58,8 @@ Default (`data/rules.json`):
 ```json
 [
   { "minPrice": 10, "scanHours": 12, "alertPct": 30, "realertPct": 50 },
-  { "minPrice": 1,  "scanHours": 12, "alertPct": 50, "realertPct": 75 },
-  { "minPrice": 0,  "scanHours": 6,  "alertPct": 15, "realertPct": 20 }
+  { "minPrice": 1, "scanHours": 12, "alertPct": 50, "realertPct": 75 },
+  { "minPrice": 0, "scanHours": 6, "alertPct": 15, "realertPct": 20 }
 ]
 ```
 
@@ -69,37 +69,37 @@ Changes take effect on restart.
 
 ### Health
 
-| Method | Path      | Description                                                        |
-| ------ | --------- | ------------------------------------------------------------------ |
+| Method | Path      | Description                                                     |
+| ------ | --------- | --------------------------------------------------------------- |
 | GET    | `/health` | Returns status, last manual scan time, and current queue depths |
 
 ### Accounts
 
-| Method | Path                               | Description                                                                   |
-| ------ | ---------------------------------- | ----------------------------------------------------------------------------- |
-| GET    | `/accounts`                        | List all accounts                                                             |
-| POST   | `/accounts`                        | Add an account (`friendlyName`, `discordId`, `steam64ids[]`, `customItems[]`) |
-| POST   | `/accounts/discord`                | Create a minimal account via Discord (`discordId`, optional `friendlyName`)   |
-| GET    | `/accounts/:uid`                   | Get account by UID                                                            |
-| PUT    | `/accounts/:uid`                   | Update account fields                                                         |
-| DELETE | `/accounts/:uid`                   | Remove account                                                                |
-| POST   | `/accounts/:uid/steam64ids`        | Add a Steam64 ID to account (`steam64id`)                                     |
-| DELETE | `/accounts/:uid/steam64ids/:id`    | Remove a Steam64 ID from account                                              |
-| POST   | `/accounts/:uid/customItems`       | Add a custom item to account (`item`)                                         |
-| DELETE | `/accounts/:uid/customItems/:item` | Remove a custom item from account (URL-encoded)                               |
-| GET    | `/accounts/:uid/inventory`         | Fetch live Steam inventory (all steam64ids merged)                            |
-| GET    | `/accounts/:uid/summary`           | Inventory items per Steam64 ID + custom items, each with latest price         |
-| GET    | `/accounts/:uid/prices`            | Price history (`?item=<name>&days=7`)                                         |
+| Method | Path                               | Description                                                                    |
+| ------ | ---------------------------------- | ------------------------------------------------------------------------------ |
+| GET    | `/accounts`                        | List all accounts                                                              |
+| POST   | `/accounts`                        | Add an account (`friendlyName`, `discordId`, `steam64ids[]`, `customItems[]`)  |
+| POST   | `/accounts/discord`                | Create a minimal account via Discord (`discordId`, optional `friendlyName`)    |
+| GET    | `/accounts/:uid`                   | Get account by UID                                                             |
+| PUT    | `/accounts/:uid`                   | Update account fields                                                          |
+| DELETE | `/accounts/:uid`                   | Remove account                                                                 |
+| POST   | `/accounts/:uid/steam64ids`        | Add a Steam64 ID to account (`steam64id`)                                      |
+| DELETE | `/accounts/:uid/steam64ids/:id`    | Remove a Steam64 ID from account                                               |
+| POST   | `/accounts/:uid/customItems`       | Add a custom item to account (`item`)                                          |
+| DELETE | `/accounts/:uid/customItems/:item` | Remove a custom item from account (URL-encoded)                                |
+| GET    | `/accounts/:uid/inventory`         | Fetch live Steam inventory (all steam64ids merged)                             |
+| GET    | `/accounts/:uid/summary`           | Inventory items per Steam64 ID + custom items, each with latest price          |
+| GET    | `/accounts/:uid/prices`            | Price history (`?item=<name>&days=7`)                                          |
 | GET    | `/accounts/:uid/progress`          | Scan state per steam64id and custom item (queued, last fetch/price, next scan) |
 
 ### Alerts & Scanning
 
-| Method | Path                             | Description                                                   |
-| ------ | -------------------------------- | ------------------------------------------------------------- |
-| GET    | `/alerts`                        | Admin view — all alerts                                       |
-| GET    | `/alerts/user/:uid`              | Unresolved alerts for a specific account UID                  |
-| PUT    | `/alerts/recipients/:id/resolve` | Resolve a single alert recipient row                          |
-| PUT    | `/alerts/user/:uid/resolve-all`  | Resolve all unresolved alerts for a UID                       |
+| Method | Path                             | Description                                                               |
+| ------ | -------------------------------- | ------------------------------------------------------------------------- |
+| GET    | `/alerts`                        | Admin view — all alerts                                                   |
+| GET    | `/alerts/user/:uid`              | Unresolved alerts for a specific account UID                              |
+| PUT    | `/alerts/recipients/:id/resolve` | Resolve a single alert recipient row                                      |
+| PUT    | `/alerts/user/:uid/resolve-all`  | Resolve all unresolved alerts for a UID                                   |
 | POST   | `/alerts/scan`                   | Enqueue all accounts for scanning (`?force=true` bypasses recency checks) |
 
 ### Example Requests
@@ -153,24 +153,23 @@ Alerts are exposed via `GET /alerts` for polling.
 
 ## Environment Variables
 
-| Variable | Default | Required | Description |
-|---|---|---|---|
-| `PORT` | `33001` | No | Port the server listens on |
-| `DB_PATH` | `<DATA_DIR>/invenchecker.db` | No | Path to the SQLite database file |
-| `CONFIG_PATH` | `<DATA_DIR>/accounts.json` | No | Path to the accounts config file |
-| `LOG_LEVEL` | `info` | No | Logging level |
-| `PRICE_RATE_LIMIT_MS` | `1100` | No | Minimum milliseconds between price API requests |
-| `INVENTORY_RATE_LIMIT_MS` | `3000` | No | Minimum milliseconds between inventory API requests |
-| `SEVEN_DAYS_SECS` | `604800` | No | Duration in seconds representing 7 days |
-| `REENQUEUE_DELAY_MS` | `21600000` | No | Fallback milliseconds between re-scans when no rule matches (default 6 hours) |
-| `MAX_STEAM64IDS` | `10` | No | Maximum Steam64 IDs per account |
-| `MAX_CUSTOM_ITEMS` | `50` | No | Maximum custom items per account |
-| `QUEUE_WARN_SIZE` | `50` | No | Log a warning when a queue reaches this many pending items |
-| `WORKER_IDLE_SLEEP_MS` | `500` | No | Milliseconds workers sleep when their queue is empty |
-| `STEAM_APP_ID` | `730` | No | Steam App ID to check inventory for (730 = CS2) |
-| `STEAM_CURRENCY` | `2` | No | Steam market currency code (1=USD, 2=GBP, 3=EUR) |
-| `RULES_PATH` | `<DATA_DIR>/rules.json` | No | Path to price-tier rules config |
-
+| Variable                  | Default                      | Required | Description                                                                   |
+| ------------------------- | ---------------------------- | -------- | ----------------------------------------------------------------------------- |
+| `PORT`                    | `33001`                      | No       | Port the server listens on                                                    |
+| `DB_PATH`                 | `<DATA_DIR>/invenchecker.db` | No       | Path to the SQLite database file                                              |
+| `CONFIG_PATH`             | `<DATA_DIR>/accounts.json`   | No       | Path to the accounts config file                                              |
+| `LOG_LEVEL`               | `info`                       | No       | Logging level                                                                 |
+| `PRICE_RATE_LIMIT_MS`     | `1100`                       | No       | Minimum milliseconds between price API requests                               |
+| `INVENTORY_RATE_LIMIT_MS` | `3000`                       | No       | Minimum milliseconds between inventory API requests                           |
+| `SEVEN_DAYS_SECS`         | `604800`                     | No       | Duration in seconds representing 7 days                                       |
+| `REENQUEUE_DELAY_MS`      | `21600000`                   | No       | Fallback milliseconds between re-scans when no rule matches (default 6 hours) |
+| `MAX_STEAM64IDS`          | `10`                         | No       | Maximum Steam64 IDs per account                                               |
+| `MAX_CUSTOM_ITEMS`        | `50`                         | No       | Maximum custom items per account                                              |
+| `QUEUE_WARN_SIZE`         | `50`                         | No       | Log a warning when a queue reaches this many pending items                    |
+| `WORKER_IDLE_SLEEP_MS`    | `500`                        | No       | Milliseconds workers sleep when their queue is empty                          |
+| `STEAM_APP_ID`            | `730`                        | No       | Steam App ID to check inventory for (730 = CS2)                               |
+| `STEAM_CURRENCY`          | `2`                          | No       | Steam market currency code (1=USD, 2=GBP, 3=EUR)                              |
+| `RULES_PATH`              | `<DATA_DIR>/rules.json`      | No       | Path to price-tier rules config                                               |
 
 ## Local Development (without Docker)
 
