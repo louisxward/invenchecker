@@ -1,6 +1,6 @@
 "use strict";
 
-const { STEAM_APP_ID: APP_ID, STEAM_INVENTORY_URL, STEAM_PRICE_URL, INVENTORY_RATE_LIMIT_MS } = require("./appConfig");
+const { STEAM_APP_ID: APP_ID, STEAM_INVENTORY_URL, STEAM_PRICE_URL, INVENTORY_RATE_LIMIT_MS, STEAM_CURRENCY } = require("./appConfig");
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -71,7 +71,7 @@ async function fetchInventory(steam64id) {
 }
 
 async function fetchPrice(marketHashName) {
-  const url = `${STEAM_PRICE_URL}/?appid=${APP_ID}&currency=1&market_hash_name=${encodeURIComponent(marketHashName)}`;
+  const url = `${STEAM_PRICE_URL}/?appid=${APP_ID}&currency=${STEAM_CURRENCY}&market_hash_name=${encodeURIComponent(marketHashName)}`;
   const res = await fetch(url, { headers: buildHeaders() });
 
   if (res.status === 429) {

@@ -56,10 +56,12 @@ router.put('/user/:uid/resolve-all', (req, res) => {
 });
 
 // POST /scan — enqueue all accounts for scanning, returns immediately
+// ?force=true or body { force: true } bypasses recency checks
 router.post('/scan', async (req, res) => {
   try {
-    await runScan();
-    res.json({ message: 'Scan enqueued', queuedAt: Math.floor(Date.now() / 1000) });
+    const force = req.query.force === 'true' || req.body?.force === true;
+    await runScan(force);
+    res.json({ message: 'Scan enqueued', force, queuedAt: Math.floor(Date.now() / 1000) });
   } catch (err) {
     logger.error({ err }, 'Manual scan enqueue failed');
     res.status(500).json({ error: err.message });

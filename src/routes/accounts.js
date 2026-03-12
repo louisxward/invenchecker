@@ -7,7 +7,7 @@ const { readConfig, writeConfig } = require("../config");
 const { fetchInventory } = require("../steam");
 const db = require("../db");
 const logger = require("../logger");
-const { enqueueInventory, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require("../queue");
+const { enqueueInventoryIfDue, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require("../queue");
 const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require("../appConfig");
 
 function getAccount(uid) {
@@ -46,7 +46,7 @@ router.post("/", (req, res) => {
   accounts.push(account);
   writeConfig(accounts);
 
-  for (const id of steam64ids) enqueueInventory(id);
+  for (const id of steam64ids) enqueueInventoryIfDue(id);
   for (const item of customItems) enqueuePrice(item);
 
   logger.info({ uid, friendlyName, discordId }, "Account added");
@@ -103,7 +103,7 @@ router.put("/:uid", (req, res) => {
   writeConfig(accounts);
 
   if (req.body.steam64ids !== undefined) {
-    for (const id of accounts[idx].steam64ids) enqueueInventory(id);
+    for (const id of accounts[idx].steam64ids) enqueueInventoryIfDue(id);
   }
   if (req.body.customItems !== undefined) {
     for (const item of accounts[idx].customItems) enqueuePrice(item);
@@ -140,7 +140,7 @@ router.post("/:uid/steam64ids", (req, res) => {
     accounts[idx].steam64ids.push(steam64id);
     writeConfig(accounts);
   }
-  enqueueInventory(steam64id);
+  enqueueInventoryIfDue(steam64id);
   res.json(accounts[idx]);
 });
 

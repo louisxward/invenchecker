@@ -20,6 +20,7 @@ module.exports = {
   MAX_STEAM64IDS: process.env.MAX_STEAM64IDS ? Number(process.env.MAX_STEAM64IDS) : 10,
   MAX_CUSTOM_ITEMS: process.env.MAX_CUSTOM_ITEMS ? Number(process.env.MAX_CUSTOM_ITEMS) : 50,
   STEAM_APP_ID: process.env.STEAM_APP_ID ? Number(process.env.STEAM_APP_ID) : 730,
+  STEAM_CURRENCY: process.env.STEAM_CURRENCY ? Number(process.env.STEAM_CURRENCY) : 2,
   STEAM_INVENTORY_URL: "https://steamcommunity.com/inventory",
   STEAM_PRICE_URL: "https://steamcommunity.com/market/priceoverview"
 };

@@ -142,7 +142,8 @@ async function processPriceForItem(itemName) {
     VALUES (?, ?, ?, ?, ?)
   `).run(itemId, priceData.lowest_price, priceData.median_price, priceData.volume, scanTime);
 
-  logger.info({ itemName, lowest_price: priceData.lowest_price }, 'Price snapshot recorded');
+  const { priceQueueSize } = require('./queue').getQueueState();
+  logger.info({ itemName, lowest_price: priceData.lowest_price, priceQueueSize }, 'Price snapshot recorded');
 
   const sevenDayLow = row && row.seven_day_low;
 
@@ -194,8 +195,8 @@ async function processPriceForItem(itemName) {
 }
 
 // Enqueue all accounts' steam64ids and customItems for scanning (used by POST /alerts/scan)
-async function runScan() {
-  const { enqueueInventory, enqueuePrice } = require('./queue');
+async function runScan(force = false) {
+  const { enqueueInventory, enqueueInventoryIfDue, enqueuePrice, enqueuePriceIfDue } = require('./queue');
   const accounts = readConfig();
 
   if (accounts.length === 0) {
@@ -203,13 +204,16 @@ async function runScan() {
     return;
   }
 
+  const queueInv   = force ? enqueueInventory : enqueueInventoryIfDue;
+  const queuePrice = force ? enqueuePrice      : enqueuePriceIfDue;
+
   for (const account of accounts) {
-    for (const id of (account.steam64ids || [])) enqueueInventory(id);
-    for (const item of (account.customItems || [])) enqueuePrice(item);
+    for (const id of (account.steam64ids || [])) queueInv(id);
+    for (const item of (account.customItems || [])) queuePrice(item);
   }
 
   scanState.lastScannedAt = Math.floor(Date.now() / 1000);
-  logger.info('Manual scan triggered: all items enqueued');
+  logger.info({ force }, 'Scan triggered: items enqueued');
 }
 
 module.exports = { runScan, scanState, processInventoryForSteamId, processPriceForItem };
