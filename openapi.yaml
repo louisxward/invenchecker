@@ -76,6 +76,8 @@ paths:
                   type: array
                   items:
                     type: string
+                    pattern: '^7656119\d{10}$'
+                    description: 17-digit Steam64 ID starting with 7656119
                   minItems: 1
                 customItems:
                   type: array
@@ -90,7 +92,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Account"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: Missing or invalid fields, or entry previously rejected by the scanner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
           $ref: "#/components/responses/Conflict"
 
@@ -161,6 +167,8 @@ paths:
                   type: array
                   items:
                     type: string
+                    pattern: '^7656119\d{10}$'
+                    description: 17-digit Steam64 ID starting with 7656119
                 customItems:
                   type: array
                   items:
@@ -172,6 +180,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Account"
+        "400":
+          description: Invalid fields or entry previously rejected by the scanner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -201,6 +215,8 @@ paths:
               properties:
                 steam64id:
                   type: string
+                  pattern: '^7656119\d{10}$'
+                  description: 17-digit Steam64 ID starting with 7656119
       responses:
         "200":
           description: Updated account
@@ -209,7 +225,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Account"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: Invalid or previously rejected steam64id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -262,7 +282,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Account"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: Item previously rejected by the scanner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -491,6 +515,13 @@ paths:
     post:
       tags: [alerts]
       summary: Enqueue all accounts for scanning immediately (returns instantly)
+      parameters:
+        - name: force
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Bypass recency checks and enqueue all items immediately regardless of last scan time
       responses:
         "200":
           description: All accounts enqueued for scanning
@@ -502,6 +533,9 @@ paths:
                   message:
                     type: string
                     example: Scan enqueued
+                  force:
+                    type: boolean
+                    description: Whether recency checks were bypassed
                   queuedAt:
                     type: integer
                     description: Unix timestamp when scan was enqueued
@@ -557,6 +591,7 @@ components:
           type: array
           items:
             type: string
+            pattern: '^7656119\d{10}$'
         customItems:
           type: array
           items:

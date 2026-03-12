@@ -20,6 +20,10 @@ function isValidSteam64id(id) {
   return typeof id === 'string' && /^7656119\d{10}$/.test(id);
 }
 
+function getBadEntryReason(type, value) {
+  return db.prepare('SELECT reason FROM bad_entries WHERE type = ? AND value = ?').get(type, value)?.reason ?? null;
+}
+
 // GET /accounts
 router.get("/", (req, res) => {
   const accounts = readConfig();
@@ -42,6 +46,14 @@ router.post("/", (req, res) => {
   }
   if (customItems.length > MAX_CUSTOM_ITEMS) {
     return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
+  }
+  for (const id of steam64ids) {
+    const reason = getBadEntryReason('steam64id', id);
+    if (reason) return res.status(400).json({ error: `steam64id ${id} was previously rejected: ${reason}` });
+  }
+  for (const item of customItems) {
+    const reason = getBadEntryReason('item', item);
+    if (reason) return res.status(400).json({ error: `item "${item}" was previously rejected: ${reason}` });
   }
 
   const accounts = readConfig();
@@ -108,6 +120,18 @@ router.put("/:uid", (req, res) => {
   if (req.body.customItems !== undefined && req.body.customItems.length > MAX_CUSTOM_ITEMS) {
     return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
   }
+  if (req.body.steam64ids !== undefined) {
+    for (const id of req.body.steam64ids) {
+      const reason = getBadEntryReason('steam64id', id);
+      if (reason) return res.status(400).json({ error: `steam64id ${id} was previously rejected: ${reason}` });
+    }
+  }
+  if (req.body.customItems !== undefined) {
+    for (const item of req.body.customItems) {
+      const reason = getBadEntryReason('item', item);
+      if (reason) return res.status(400).json({ error: `item "${item}" was previously rejected: ${reason}` });
+    }
+  }
   if (req.body.friendlyName !== undefined) accounts[idx].friendlyName = req.body.friendlyName;
   if (req.body.discordId !== undefined) accounts[idx].discordId = req.body.discordId;
   if (req.body.steam64ids !== undefined) accounts[idx].steam64ids = req.body.steam64ids;
@@ -144,6 +168,8 @@ router.post("/:uid/steam64ids", (req, res) => {
   const { steam64id } = req.body;
   if (!steam64id) return res.status(400).json({ error: "steam64id is required" });
   if (!isValidSteam64id(steam64id)) return res.status(400).json({ error: `Invalid steam64id: ${steam64id}` });
+  const badIdReason = getBadEntryReason('steam64id', steam64id);
+  if (badIdReason) return res.status(400).json({ error: `steam64id ${steam64id} was previously rejected: ${badIdReason}` });
 
   const idx = accounts.findIndex(a => a.uid === req.params.uid);
   if (!accounts[idx].steam64ids.includes(steam64id)) {
@@ -177,6 +203,8 @@ router.post("/:uid/customItems", (req, res) => {
   if (!account) return res.status(404).json({ error: "Account not found" });
   const { item } = req.body;
   if (!item) return res.status(400).json({ error: "item is required" });
+  const badItemReason = getBadEntryReason('item', item);
+  if (badItemReason) return res.status(400).json({ error: `item "${item}" was previously rejected: ${badItemReason}` });
 
   const idx = accounts.findIndex(a => a.uid === req.params.uid);
   if (!accounts[idx].customItems.includes(item)) {

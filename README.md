@@ -4,7 +4,7 @@ Version: 0.0.1
 
 Publisher: ChowIndustries
 
-CS2 inventory price tracker. Monitors Steam inventories for tracked items, records price snapshots continuously, and alerts when a price spikes 15%+ over its 7-day low.
+CS2 inventory price tracker. Monitors Steam inventories for tracked items, records price snapshots continuously, and alerts when a price spikes above a configurable threshold over its 7-day low.
 
 ## Quick Start
 
@@ -39,6 +39,31 @@ Example:
 ```
 
 > **Note:** `customItems` values must match the Steam `market_hash_name` exactly (case-sensitive).
+
+> **Note:** `steam64ids` must be valid Steam64 IDs (17 digits, starting with `7656119`). If a steam64id or custom item was previously rejected by the scanner it cannot be re-added via the API (returns 400 with reason).
+
+### rules.json
+
+Controls scan interval and alert thresholds per price tier. Rules are evaluated highest-first; the first rule whose `minPrice` is ≤ the item's current price applies.
+
+| Field | Description |
+|---|---|
+| `minPrice` | Minimum item price (in configured currency) to apply this rule |
+| `scanHours` | Re-scan interval in hours |
+| `alertPct` | % above 7-day low to trigger an alert |
+| `realertPct` | % above 7-day low to allow a re-alert within the same spike event |
+
+Default (`data/rules.json`):
+
+```json
+[
+  { "minPrice": 10, "scanHours": 12, "alertPct": 30, "realertPct": 50 },
+  { "minPrice": 1,  "scanHours": 12, "alertPct": 50, "realertPct": 75 },
+  { "minPrice": 0,  "scanHours": 6,  "alertPct": 15, "realertPct": 20 }
+]
+```
+
+Changes take effect on restart.
 
 ## API Endpoints
 
@@ -75,7 +100,7 @@ Example:
 | GET    | `/alerts/user/:uid`              | Unresolved alerts for a specific account UID                  |
 | PUT    | `/alerts/recipients/:id/resolve` | Resolve a single alert recipient row                          |
 | PUT    | `/alerts/user/:uid/resolve-all`  | Resolve all unresolved alerts for a UID                       |
-| POST   | `/alerts/scan`                   | Enqueue all accounts for scanning immediately (returns instantly) |
+| POST   | `/alerts/scan`                   | Enqueue all accounts for scanning (`?force=true` bypasses recency checks) |
 
 ### Example Requests
 
@@ -118,11 +143,11 @@ curl -X POST http://localhost:33001/alerts/scan
 Two queues run continuously in the background:
 
 - **Inventory queue** — fetches each Steam64 ID's inventory, upserts items to the DB, and feeds found items into the price queue.
-- **Price queue** — fetches the current market price for each item (rate-limited to ~1 req/sec), records a snapshot, and creates an alert if the price is ≥ 15% above its 7-day low.
+- **Price queue** — fetches the current market price for each item (rate-limited to ~1 req/sec), records a snapshot, and creates an alert if the price spikes above its 7-day low by the tier threshold.
 
-After each item is processed it is automatically re-enqueued to run again **6 hours later**.
+After each item is processed it is re-enqueued according to its price tier (see `rules.json`): by default, items worth ≥ £10 re-scan every 12 h, items worth ≥ £1 every 12 h, and cheaper items every 6 h. Alert and re-alert thresholds also vary by tier.
 
-When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run.
+When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used.
 
 Alerts are exposed via `GET /alerts` for polling.
 
@@ -136,14 +161,15 @@ Alerts are exposed via `GET /alerts` for polling.
 | `LOG_LEVEL` | `info` | No | Logging level |
 | `PRICE_RATE_LIMIT_MS` | `1100` | No | Minimum milliseconds between price API requests |
 | `INVENTORY_RATE_LIMIT_MS` | `3000` | No | Minimum milliseconds between inventory API requests |
-| `SPIKE_THRESHOLD` | `1.15` | No | Price spike multiplier threshold (e.g. 1.15 = 15% increase) |
 | `SEVEN_DAYS_SECS` | `604800` | No | Duration in seconds representing 7 days |
-| `REENQUEUE_DELAY_MS` | `21600000` | No | Milliseconds between re-scans of each item (default 6 hours) |
+| `REENQUEUE_DELAY_MS` | `21600000` | No | Fallback milliseconds between re-scans when no rule matches (default 6 hours) |
 | `MAX_STEAM64IDS` | `10` | No | Maximum Steam64 IDs per account |
 | `MAX_CUSTOM_ITEMS` | `50` | No | Maximum custom items per account |
 | `QUEUE_WARN_SIZE` | `50` | No | Log a warning when a queue reaches this many pending items |
 | `WORKER_IDLE_SLEEP_MS` | `500` | No | Milliseconds workers sleep when their queue is empty |
 | `STEAM_APP_ID` | `730` | No | Steam App ID to check inventory for (730 = CS2) |
+| `STEAM_CURRENCY` | `2` | No | Steam market currency code (1=USD, 2=GBP, 3=EUR) |
+| `RULES_PATH` | `<DATA_DIR>/rules.json` | No | Path to price-tier rules config |
 
 
 ## Local Development (without Docker)
