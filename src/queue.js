@@ -5,6 +5,7 @@ const { readConfig } = require('./config');
 const { sleep } = require('./steam');
 const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS, INVENTORY_RATE_LIMIT_MS, QUEUE_WARN_SIZE, RATE_LIMIT_RETRY_MS } = require('./appConfig');
 const { processInventoryForSteamId, processPriceForItem } = require('./scanner');
+const { getRuleForPrice } = require('./rules');
 const db = require('./db');
 
 // Two FIFO queues keyed by their natural identifier (steam64id / itemName).
@@ -102,8 +103,9 @@ async function priceWorker() {
       await sleep(RATE_LIMIT_RETRY_MS);
       enqueuePrice(itemName);
     } else {
+      const delayMs = result?.scanMs ?? REENQUEUE_DELAY_MS;
       await sleep(PRICE_RATE_LIMIT_MS);
-      setTimeout(() => enqueuePrice(itemName), REENQUEUE_DELAY_MS);
+      setTimeout(() => enqueuePrice(itemName), delayMs);
     }
   }
 }
@@ -132,13 +134,14 @@ function startQueues() {
     for (const item of (account.customItems || [])) {
       const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(item)?.id;
       const row = itemId
-        ? db.prepare('SELECT MAX(captured_at) AS last FROM price_snapshots WHERE item_id = ?').get(itemId)
+        ? db.prepare('SELECT captured_at AS last, lowest_price FROM price_snapshots WHERE item_id = ? ORDER BY captured_at DESC LIMIT 1').get(itemId)
         : null;
+      const scanMs = (row?.lowest_price != null) ? getRuleForPrice(row.lowest_price).scanMs : REENQUEUE_DELAY_MS;
       const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
-      if (elapsedMs >= REENQUEUE_DELAY_MS) {
+      if (elapsedMs >= scanMs) {
         enqueuePrice(item);
       } else {
-        const resumeInMs = REENQUEUE_DELAY_MS - elapsedMs;
+        const resumeInMs = scanMs - elapsedMs;
         setTimeout(() => enqueuePrice(item), resumeInMs);
         logger.info({ item, resumeInMs }, 'Price scan not yet due, scheduling');
       }

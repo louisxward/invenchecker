@@ -4,7 +4,8 @@ const db = require('./db');
 const logger = require('./logger');
 const { readConfig } = require('./config');
 const { fetchInventory, fetchPrice } = require('./steam');
-const { SPIKE_THRESHOLD, SEVEN_DAYS_SECS, ALERT_RESEND_THRESHOLD } = require('./appConfig');
+const { SEVEN_DAYS_SECS } = require('./appConfig');
+const { getRuleForPrice } = require('./rules');
 
 const upsertInvItem = db.prepare(`
   INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen)
@@ -124,6 +125,8 @@ async function processPriceForItem(itemName) {
     return;
   }
 
+  const { scanMs, alertThreshold, realertThreshold } = getRuleForPrice(priceData.lowest_price);
+
   const scanTime = Math.floor(Date.now() / 1000);
   const itemId = db.getOrCreateItemId(itemName);
   const sevenDayAgo = scanTime - SEVEN_DAYS_SECS;
@@ -143,18 +146,18 @@ async function processPriceForItem(itemName) {
 
   const sevenDayLow = row && row.seven_day_low;
 
-  if (sevenDayLow && sevenDayLow > 0 && priceData.lowest_price >= sevenDayLow * SPIKE_THRESHOLD) {
+  if (sevenDayLow && sevenDayLow > 0 && priceData.lowest_price >= sevenDayLow * alertThreshold) {
     const lastAlert = db.prepare(
       'SELECT price_at_alert, created_at FROM alerts WHERE item_id = ? ORDER BY created_at DESC LIMIT 1'
     ).get(itemId);
 
     let shouldAlert = true;
-    if (lastAlert && priceData.lowest_price < lastAlert.price_at_alert * ALERT_RESEND_THRESHOLD) {
+    if (lastAlert && priceData.lowest_price < sevenDayLow * realertThreshold) {
       const spikeReset = db.prepare(`
         SELECT 1 FROM price_snapshots
         WHERE item_id = ? AND captured_at > ? AND lowest_price < ? * ?
         LIMIT 1
-      `).get(itemId, lastAlert.created_at, sevenDayLow, SPIKE_THRESHOLD);
+      `).get(itemId, lastAlert.created_at, sevenDayLow, alertThreshold);
 
       if (!spikeReset) {
         shouldAlert = false;
@@ -186,6 +189,8 @@ async function processPriceForItem(itemName) {
       );
     }
   }
+
+  return { scanMs };
 }
 
 // Enqueue all accounts' steam64ids and customItems for scanning (used by POST /alerts/scan)
