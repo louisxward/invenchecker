@@ -3,6 +3,11 @@ services:
     build: .
     expose:
       - "33001"
+    networks:
+      - invenchecker
     restart: unless-stopped
     volumes:
       - /opt/data/invenchecker:/app/data
+networks:
+  invenchecker:
+    external: true
