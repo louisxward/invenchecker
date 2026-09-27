@@ -1,6 +1,6 @@
 'use strict';
 
-const { fetchInventory } = require('../src/steam');
+const { fetchInventory, fetchPrice, isNetworkError } = require('../src/steam');
 
 function mockResponse(body, status = 200) {
   return {
@@ -74,5 +74,50 @@ describe('fetchInventory pagination', () => {
   it('throws on non-ok response', async () => {
     fetchSpy.mockResolvedValueOnce(mockResponse({}, 500));
     await expect(fetchInventory('76561198000000001')).rejects.toThrow('HTTP 500');
+  });
+
+  it('passes a timeout signal to fetch', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({ success: true, descriptions: [], more_items: 0 }));
+    await fetchInventory('76561198000000001');
+    expect(fetchSpy.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe('fetchPrice', () => {
+  let fetchSpy;
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(global, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('parses prices and volume', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse({ success: true, lowest_price: '£1,234.56', median_price: '£1.20', volume: '1,024' })
+    );
+    const result = await fetchPrice('AK-47 | Redline (Field-Tested)');
+    expect(result).toEqual({ lowest_price: 1234.56, median_price: 1.2, volume: 1024 });
+    expect(fetchSpy.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('returns null when Steam reports success=false', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({ success: false }));
+    expect(await fetchPrice('Nope')).toBeNull();
+  });
+});
+
+describe('isNetworkError', () => {
+  it('recognises connection failures and timeouts', async () => {
+    const refused = await fetch('http://127.0.0.1:1').catch((err) => err);
+    expect(isNetworkError(refused)).toBe(true);
+    expect(isNetworkError(new DOMException('timed out', 'TimeoutError'))).toBe(true);
+  });
+
+  it('does not treat HTTP errors as network errors', () => {
+    expect(isNetworkError(new Error('Failed to fetch price for "x": HTTP 500'))).toBe(false);
+    expect(isNetworkError(new Error('Rate limited fetching price for "x"'))).toBe(false);
   });
 });

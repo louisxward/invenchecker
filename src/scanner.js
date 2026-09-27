@@ -3,7 +3,7 @@
 const db = require('./db');
 const logger = require('./logger');
 const { readConfig } = require('./config');
-const { fetchInventory, fetchPrice } = require('./steam');
+const { fetchInventory, fetchPrice, isNetworkError } = require('./steam');
 const { SEVEN_DAYS_SECS } = require('./appConfig');
 const { getRuleForPrice } = require('./rules');
 
@@ -75,13 +75,17 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
     ).run(steam64id, descriptions.length, durationMs, Math.floor(Date.now() / 1000));
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
-    if (!isRateLimit) {
-      db.markBad('steam64id', steam64id, err.message);
-      logger.warn({ steam64id, reason: err.message }, 'Marked steam64id as bad');
-    } else {
+    if (isRateLimit) {
       logger.error({ err, steam64id }, 'Failed to fetch inventory (rate limited), skipping');
+      return 'rate_limited';
     }
-    return isRateLimit ? 'rate_limited' : undefined;
+    if (isNetworkError(err)) {
+      logger.error({ err, steam64id }, 'Failed to fetch inventory (network error), will retry');
+      return 'retry';
+    }
+    db.markBad('steam64id', steam64id, err.message);
+    logger.warn({ steam64id, reason: err.message }, 'Marked steam64id as bad');
+    return;
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -110,13 +114,17 @@ async function processPriceForItem(itemName) {
     priceData = await fetchPrice(itemName);
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
-    if (!isRateLimit) {
-      db.markBad('item', itemName, err.message);
-      logger.warn({ itemName, reason: err.message }, 'Marked item as bad');
-    } else {
+    if (isRateLimit) {
       logger.error({ err, itemName }, 'Failed to fetch price (rate limited), skipping');
+      return 'rate_limited';
     }
-    return isRateLimit ? 'rate_limited' : undefined;
+    if (isNetworkError(err)) {
+      logger.error({ err, itemName }, 'Failed to fetch price (network error), will retry');
+      return 'retry';
+    }
+    db.markBad('item', itemName, err.message);
+    logger.warn({ itemName, reason: err.message }, 'Marked item as bad');
+    return;
   }
 
   if (!priceData || priceData.lowest_price === null) {

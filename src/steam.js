@@ -8,6 +8,8 @@ const {
   STEAM_CURRENCY,
 } = require('./appConfig');
 
+const REQUEST_TIMEOUT_MS = 10_000;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -17,6 +19,12 @@ function parsePrice(str) {
   const cleaned = str.replace(/[^0-9.]/g, '');
   const val = parseFloat(cleaned);
   return isNaN(val) ? null : val;
+}
+
+// No response at all (DNS, connection reset, timeout) says nothing about the item or steam64id,
+// so callers retry these instead of marking the entry bad. HTTP errors are thrown as plain Errors.
+function isNetworkError(err) {
+  return err.name === 'TimeoutError' || (err.name === 'TypeError' && err.message === 'fetch failed');
 }
 
 function buildHeaders() {
@@ -48,7 +56,7 @@ async function fetchInventory(steam64id) {
 
   while (true) {
     const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=100${cursor ? `&start_assetid=${cursor}` : ''}`;
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
     if (res.status === 400 || res.status === 403) {
       throw new Error(`Cannot access inventory for ${steam64id}`);
@@ -78,7 +86,7 @@ async function fetchInventory(steam64id) {
 
 async function fetchPrice(marketHashName) {
   const url = `${STEAM_PRICE_URL}/?appid=${APP_ID}&currency=${STEAM_CURRENCY}&market_hash_name=${encodeURIComponent(marketHashName)}`;
-  const res = await fetch(url, { headers: buildHeaders() });
+  const res = await fetch(url, { headers: buildHeaders(), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
   if (res.status === 429) {
     throw new Error(`Rate limited fetching price for "${marketHashName}"`);
@@ -100,4 +108,4 @@ async function fetchPrice(marketHashName) {
   };
 }
 
-module.exports = { fetchInventory, fetchPrice, sleep };
+module.exports = { fetchInventory, fetchPrice, isNetworkError, sleep };

@@ -103,8 +103,11 @@ async function inventoryWorker() {
       processingInventory.delete(steam64id);
     }
 
-    if (result === 'rate_limited') {
-      logger.info({ steam64id, retryInMs: RATE_LIMIT_RETRY_MS }, 'Inventory rate limited, pausing before retry');
+    if (result === 'rate_limited' || result === 'retry') {
+      logger.info(
+        { steam64id, result, retryInMs: RATE_LIMIT_RETRY_MS },
+        'Inventory fetch failed, pausing before retry'
+      );
       await sleep(RATE_LIMIT_RETRY_MS);
       enqueueInventoryIfDue(steam64id);
     } else {
@@ -137,8 +140,8 @@ async function priceWorker() {
       logger.error({ err, itemName }, 'Unexpected error in price worker');
     }
 
-    if (result === 'rate_limited') {
-      logger.info({ itemName, retryInMs: RATE_LIMIT_RETRY_MS }, 'Price rate limited, pausing before retry');
+    if (result === 'rate_limited' || result === 'retry') {
+      logger.info({ itemName, result, retryInMs: RATE_LIMIT_RETRY_MS }, 'Price fetch failed, pausing before retry');
       await sleep(RATE_LIMIT_RETRY_MS);
       enqueuePrice(itemName);
     } else {

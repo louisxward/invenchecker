@@ -5,6 +5,7 @@ const fs = require('fs');
 jest.mock('../src/steam', () => ({
   fetchInventory: jest.fn(),
   fetchPrice: jest.fn(),
+  isNetworkError: jest.requireActual('../src/steam').isNetworkError,
   sleep: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -143,6 +144,16 @@ describe('Scanner', () => {
       expect(result).toBe('rate_limited');
     });
 
+    it.each([
+      ['connection failure', Object.assign(new TypeError('fetch failed'), { cause: new Error('ECONNRESET') })],
+      ['timeout', new DOMException('The operation was aborted due to timeout', 'TimeoutError')],
+    ])('does not mark a steam64id as bad on a %s, and asks for a retry', async (_label, error) => {
+      steam.fetchInventory.mockRejectedValue(error);
+      const result = await processInventoryForSteamId(STEAM_ID, jest.fn());
+      expect(result).toBe('retry');
+      expect(db.isBad('steam64id', STEAM_ID)).toBe(false);
+    });
+
     it('skips previously bad steam64ids', async () => {
       db.markBad('steam64id', STEAM_ID, 'manual');
       await processInventoryForSteamId(STEAM_ID, jest.fn());
@@ -185,6 +196,16 @@ describe('Scanner', () => {
       steam.fetchPrice.mockRejectedValue(new Error(`Rate limited fetching price for "${ITEM_NAME}"`));
       const result = await processPriceForItem(ITEM_NAME);
       expect(result).toBe('rate_limited');
+    });
+
+    it.each([
+      ['connection failure', new TypeError('fetch failed')],
+      ['timeout', new DOMException('The operation was aborted due to timeout', 'TimeoutError')],
+    ])('does not mark an item as bad on a %s, and asks for a retry', async (_label, error) => {
+      steam.fetchPrice.mockRejectedValue(error);
+      const result = await processPriceForItem(ITEM_NAME);
+      expect(result).toBe('retry');
+      expect(db.isBad('item', ITEM_NAME)).toBe(false);
     });
 
     it('skips previously bad items', async () => {
