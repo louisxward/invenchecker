@@ -6,6 +6,7 @@ jest.mock('../src/steam', () => ({
   fetchInventory: jest.fn(),
   fetchPrice: jest.fn(),
   isNetworkError: jest.requireActual('../src/steam').isNetworkError,
+  isServerError: jest.requireActual('../src/steam').isServerError,
   sleep: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -353,6 +354,70 @@ describe('Scanner', () => {
         .prepare('SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?')
         .get(ITEM_NAME);
       expect(alert).toBeUndefined();
+    });
+  });
+
+  describe('Steam server errors (5xx)', () => {
+    const serverError = (status = 500) => Object.assign(new Error(`HTTP ${status}`), { status });
+    const ok = { lowest_price: 1.0, median_price: 1.0, volume: 1 };
+
+    // Fails `name` once, with a successful request for another item in between when `othersSucceed`
+    async function failPrice(name, othersSucceed) {
+      if (othersSucceed) {
+        steam.fetchPrice.mockResolvedValueOnce(ok);
+        await processPriceForItem(`${name} (other)`);
+      }
+      steam.fetchPrice.mockRejectedValueOnce(serverError());
+      return processPriceForItem(name);
+    }
+
+    it('retries an item instead of marking it bad', async () => {
+      expect(await failPrice('5xx once', true)).toBe('retry');
+      expect(db.isBad('item', '5xx once')).toBe(false);
+    });
+
+    it('marks an item bad after 3 server errors while other requests succeed', async () => {
+      expect(await failPrice('5xx item', true)).toBe('retry');
+      expect(await failPrice('5xx item', true)).toBe('retry');
+      expect(await failPrice('5xx item', true)).toBeUndefined();
+      expect(db.isBad('item', '5xx item')).toBe(true);
+    });
+
+    it('never marks items bad while every request fails (an outage)', async () => {
+      for (let i = 0; i < 5; i++) {
+        expect(await failPrice('outage A', false)).toBe('retry');
+        expect(await failPrice('outage B', false)).toBe('retry');
+      }
+      expect(db.isBad('item', 'outage A')).toBe(false);
+      expect(db.isBad('item', 'outage B')).toBe(false);
+    });
+
+    it('starts counting again after the item succeeds', async () => {
+      await failPrice('5xx flaky', true);
+      await failPrice('5xx flaky', true);
+      steam.fetchPrice.mockResolvedValueOnce(ok);
+      await processPriceForItem('5xx flaky');
+      expect(await failPrice('5xx flaky', true)).toBe('retry');
+      expect(await failPrice('5xx flaky', true)).toBe('retry');
+      expect(db.isBad('item', '5xx flaky')).toBe(false);
+    });
+
+    it('marks a steam64id bad after 3 server errors while other inventories load', async () => {
+      const id = '76561198000000050';
+      for (let i = 0; i < 3; i++) {
+        steam.fetchInventory.mockResolvedValueOnce([]);
+        await processInventoryForSteamId('76561198000000051', jest.fn());
+        steam.fetchInventory.mockRejectedValueOnce(serverError(502));
+        const result = await processInventoryForSteamId(id, jest.fn());
+        expect(result).toBe(i < 2 ? 'retry' : undefined);
+      }
+      expect(db.isBad('steam64id', id)).toBe(true);
+    });
+
+    it('still marks an item bad straight away on a 4xx', async () => {
+      steam.fetchPrice.mockRejectedValueOnce(serverError(404));
+      expect(await processPriceForItem('4xx item')).toBeUndefined();
+      expect(db.isBad('item', '4xx item')).toBe(true);
     });
   });
 });

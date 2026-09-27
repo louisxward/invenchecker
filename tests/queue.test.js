@@ -6,6 +6,7 @@ jest.mock('../src/steam', () => ({
   fetchInventory: jest.fn(),
   fetchPrice: jest.fn(),
   isNetworkError: jest.requireActual('../src/steam').isNetworkError,
+  isServerError: jest.requireActual('../src/steam').isServerError,
   sleep: jest.fn().mockResolvedValue(undefined),
 }));
 

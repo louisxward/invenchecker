@@ -27,6 +27,15 @@ function isNetworkError(err) {
   return err.name === 'TimeoutError' || (err.name === 'TypeError' && err.message === 'fetch failed');
 }
 
+function httpError(message, status) {
+  return Object.assign(new Error(message), { status });
+}
+
+// Steam answered, but with a 5xx: either an outage or something wrong with this one entry
+function isServerError(err) {
+  return err.status >= 500;
+}
+
 function buildHeaders() {
   const headers = {
     'User-Agent':
@@ -65,7 +74,7 @@ async function fetchInventory(steam64id) {
       throw new Error(`Rate limited fetching inventory for ${steam64id}`);
     }
     if (!res.ok) {
-      throw new Error(`Failed to fetch inventory for ${steam64id}: HTTP ${res.status}`);
+      throw httpError(`Failed to fetch inventory for ${steam64id}: HTTP ${res.status}`, res.status);
     }
 
     const data = await res.json();
@@ -92,7 +101,7 @@ async function fetchPrice(marketHashName) {
     throw new Error(`Rate limited fetching price for "${marketHashName}"`);
   }
   if (!res.ok) {
-    throw new Error(`Failed to fetch price for "${marketHashName}": HTTP ${res.status}`);
+    throw httpError(`Failed to fetch price for "${marketHashName}": HTTP ${res.status}`, res.status);
   }
 
   const data = await res.json();
@@ -108,4 +117,4 @@ async function fetchPrice(marketHashName) {
   };
 }
 
-module.exports = { fetchInventory, fetchPrice, isNetworkError, sleep };
+module.exports = { fetchInventory, fetchPrice, isNetworkError, isServerError, sleep };

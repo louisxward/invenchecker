@@ -5,7 +5,7 @@ const logger = require('./logger');
 const { readAccounts } = require('./accountStore');
 const db = require('./db');
 const { getRuleForPrice } = require('./rules');
-const { fetchInventory, fetchPrice, isNetworkError } = require('./steam');
+const { fetchInventory, fetchPrice, isNetworkError, isServerError } = require('./steam');
 
 const upsertInvItem = db.prepare(`
   INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen)
@@ -18,6 +18,26 @@ const markMissing = db.prepare(`
   SET missing = 1, missing_at = ?
   WHERE steam64id = ? AND missing = 0 AND item_id NOT IN (SELECT value FROM json_each(?))
 `);
+
+// A Steam 5xx is retried, since it's usually an outage. It only counts towards marking the entry bad
+// when Steam has answered another request of the same kind since the entry last failed, so an
+// outage can't blacklist everything, while an entry that fails on its own is given up on.
+const SERVER_ERROR_LIMIT = 3;
+const serverErrors = { steam64id: new Map(), item: new Map() }; // value -> { count, successSeq }
+const successSeq = { steam64id: 0, item: 0 };
+
+function recordSteamSuccess(type, value) {
+  successSeq[type]++;
+  serverErrors[type].delete(value);
+}
+
+// Returns the number of 5xx responses that count against the entry
+function recordServerError(type, value) {
+  const prev = serverErrors[type].get(value);
+  const count = !prev ? 1 : successSeq[type] > prev.successSeq ? prev.count + 1 : prev.count;
+  serverErrors[type].set(value, { count, successSeq: successSeq[type] });
+  return count;
+}
 
 const scanState = {
   lastScannedAt: null,
@@ -77,6 +97,7 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
   try {
     logger.info({ steam64id }, 'inventory - fetching');
     descriptions = await fetchInventory(steam64id);
+    recordSteamSuccess('steam64id', steam64id);
     const durationMs = Date.now() - fetchStart;
     logger.info({ steam64id, itemCount: descriptions.length, durationMs }, 'inventory - fetched');
     db.prepare(
@@ -91,6 +112,13 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
     if (isNetworkError(err)) {
       logger.error({ err, steam64id }, 'inventory - network error, will retry');
       return 'retry';
+    }
+    if (isServerError(err)) {
+      const count = recordServerError('steam64id', steam64id);
+      if (count < SERVER_ERROR_LIMIT) {
+        logger.error({ err, steam64id, count }, 'inventory - Steam server error, will retry');
+        return 'retry';
+      }
     }
     db.markBad('steam64id', steam64id, err.message);
     logger.warn({ steam64id, reason: err.message }, 'inventory - marked steam64id as bad');
@@ -121,6 +149,7 @@ async function processPriceForItem(itemName) {
   let priceData;
   try {
     priceData = await fetchPrice(itemName);
+    recordSteamSuccess('item', itemName);
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
     if (isRateLimit) {
@@ -130,6 +159,13 @@ async function processPriceForItem(itemName) {
     if (isNetworkError(err)) {
       logger.error({ err, itemName }, 'price - network error, will retry');
       return 'retry';
+    }
+    if (isServerError(err)) {
+      const count = recordServerError('item', itemName);
+      if (count < SERVER_ERROR_LIMIT) {
+        logger.error({ err, itemName, count }, 'price - Steam server error, will retry');
+        return 'retry';
+      }
     }
     db.markBad('item', itemName, err.message);
     logger.warn({ itemName, reason: err.message }, 'price - marked item as bad');

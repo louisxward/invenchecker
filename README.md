@@ -149,7 +149,7 @@ After each item is processed it is re-enqueued according to its price tier (see 
 
 When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used. Once no account tracks a steam64id or item any more (account deleted, entry removed, or item no longer in the inventory), it drops out of the rotation at its next scheduled scan.
 
-If Steam rate limits a request, or doesn't respond within 10 seconds, the worker pauses (`RATE_LIMIT_RETRY_MS`) and retries. Any other Steam error marks the steam64id or item as bad, and it is skipped from then on.
+If Steam rate limits a request, returns a server error (5xx), or doesn't respond within 10 seconds, the worker pauses (`RATE_LIMIT_RETRY_MS`) and retries. A steam64id or item that gets 3 server errors while Steam is answering other requests is treated as broken. That, or any other Steam error (such as a private inventory), marks the steam64id or item as bad, and it is skipped from then on.
 
 Alerts are exposed via `GET /alerts` for polling.
 

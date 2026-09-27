@@ -1,6 +1,6 @@
 'use strict';
 
-const { fetchInventory, fetchPrice, isNetworkError } = require('../src/steam');
+const { fetchInventory, fetchPrice, isNetworkError, isServerError } = require('../src/steam');
 
 function mockResponse(body, status = 200) {
   return {
@@ -71,9 +71,11 @@ describe('fetchInventory pagination', () => {
     await expect(fetchInventory('76561198000000001')).rejects.toThrow('Cannot access inventory');
   });
 
-  it('throws on non-ok response', async () => {
+  it('throws on non-ok response, with the status', async () => {
     fetchSpy.mockResolvedValueOnce(mockResponse({}, 500));
-    await expect(fetchInventory('76561198000000001')).rejects.toThrow('HTTP 500');
+    const err = await fetchInventory('76561198000000001').catch((e) => e);
+    expect(err.message).toContain('HTTP 500');
+    expect(isServerError(err)).toBe(true);
   });
 
   it('passes a timeout signal to fetch', async () => {
@@ -119,5 +121,20 @@ describe('isNetworkError', () => {
   it('does not treat HTTP errors as network errors', () => {
     expect(isNetworkError(new Error('Failed to fetch price for "x": HTTP 500'))).toBe(false);
     expect(isNetworkError(new Error('Rate limited fetching price for "x"'))).toBe(false);
+  });
+});
+
+describe('isServerError', () => {
+  it('is true for 5xx HTTP errors only', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    try {
+      fetchSpy.mockResolvedValueOnce(mockResponse({}, 503));
+      expect(isServerError(await fetchPrice('x').catch((e) => e))).toBe(true);
+      fetchSpy.mockResolvedValueOnce(mockResponse({}, 404));
+      expect(isServerError(await fetchPrice('x').catch((e) => e))).toBe(false);
+      expect(isServerError(new TypeError('fetch failed'))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
