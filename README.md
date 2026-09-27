@@ -147,7 +147,9 @@ Two queues run continuously in the background:
 
 After each item is processed it is re-enqueued according to its price tier (see `rules.json`): by default, items worth ≥ £10 re-scan every 12 h, items worth ≥ £1 every 12 h, and cheaper items every 6 h. Alert and re-alert thresholds also vary by tier.
 
-When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used.
+When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used. Once no account tracks a steam64id or item any more (account deleted, entry removed, or item no longer in the inventory), it drops out of the rotation at its next scheduled scan.
+
+If Steam rate limits a request, or doesn't respond within 10 seconds, the worker pauses (`RATE_LIMIT_RETRY_MS`) and retries. Any other Steam error marks the steam64id or item as bad, and it is skipped from then on.
 
 Alerts are exposed via `GET /alerts` for polling.
 
@@ -163,6 +165,7 @@ Alerts are exposed via `GET /alerts` for polling.
 | `INVENTORY_RATE_LIMIT_MS` | `3000`                       | No       | Minimum milliseconds between inventory API requests                           |
 | `SEVEN_DAYS_SECS`         | `604800`                     | No       | Duration in seconds representing 7 days                                       |
 | `REENQUEUE_DELAY_MS`      | `21600000`                   | No       | Fallback milliseconds between re-scans when no rule matches (default 6 hours) |
+| `RATE_LIMIT_RETRY_MS`     | `60000`                      | No       | Milliseconds a worker pauses after a rate limit or network error              |
 | `MAX_STEAM64IDS`          | `10`                         | No       | Maximum Steam64 IDs per account                                               |
 | `MAX_CUSTOM_ITEMS`        | `50`                         | No       | Maximum custom items per account                                              |
 | `QUEUE_WARN_SIZE`         | `50`                         | No       | Log a warning when a queue reaches this many pending items                    |
@@ -171,11 +174,15 @@ Alerts are exposed via `GET /alerts` for polling.
 | `STEAM_CURRENCY`          | `2`                          | No       | Steam market currency code (1=USD, 2=GBP, 3=EUR)                              |
 | `RULES_PATH`              | `<DATA_DIR>/rules.json`      | No       | Path to price-tier rules config                                               |
 
+Docker Compose loads `.env` if it exists; see `.env.example`.
+
 ## Local Development (without Docker)
+
+Requires Node 24.
 
 ```bash
 npm install
-mkdir -p data
-echo '[]' > data/accounts.json
-NODE_ENV=development npm run dev
+npm run dev      # pretty logs, restarts on save; creates data/accounts.json if missing
+npm test
+npm run lint
 ```
