@@ -3,21 +3,15 @@
 const { SEVEN_DAYS_SECS } = require('./config');
 const logger = require('./logger');
 const { readAccounts } = require('./accountStore');
-const db = require('./db');
+const alertRecipients = require('./repositories/alertRecipients');
+const alerts = require('./repositories/alerts');
+const badEntries = require('./repositories/badEntries');
+const inventoryFetches = require('./repositories/inventoryFetches');
+const inventoryItems = require('./repositories/inventoryItems');
+const itemNames = require('./repositories/itemNames');
+const priceSnapshots = require('./repositories/priceSnapshots');
 const { getRuleForPrice } = require('./rules');
 const { fetchInventory, fetchPrice, isNetworkError, isServerError } = require('./steam');
-
-const upsertInvItem = db.prepare(`
-  INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen)
-  VALUES (?, ?, ?, ?)
-  ON CONFLICT(steam64id, item_id) DO UPDATE SET last_seen = excluded.last_seen, missing = 0, missing_at = NULL
-`);
-
-const markMissing = db.prepare(`
-  UPDATE inventory_items
-  SET missing = 1, missing_at = ?
-  WHERE steam64id = ? AND missing = 0 AND item_id NOT IN (SELECT value FROM json_each(?))
-`);
 
 // A Steam 5xx is retried, since it's usually an outage. It only counts towards marking the entry bad
 // when Steam has answered another request of the same kind since the entry last failed, so an
@@ -49,19 +43,14 @@ function getUidsForItem(itemId) {
   const uids = new Set();
   const accounts = readAccounts();
 
-  const holders = new Set(
-    db
-      .prepare('SELECT DISTINCT steam64id FROM inventory_items WHERE item_id = ? AND missing = 0')
-      .all(itemId)
-      .map((row) => row.steam64id)
-  );
+  const holders = new Set(inventoryItems.listHolders(itemId));
 
   // Several accounts can list the same steam64id, and each of them tracks its items
   for (const account of accounts) {
     if ((account.steam64ids || []).some((id) => holders.has(id))) uids.add(account.uid);
   }
 
-  const itemName = db.prepare('SELECT name FROM item_names WHERE id = ?').get(itemId)?.name;
+  const itemName = itemNames.getItemName(itemId);
   if (itemName) {
     for (const account of accounts) {
       if ((account.customItems || []).includes(itemName)) {
@@ -80,14 +69,14 @@ function isSteam64idTracked(steam64id) {
 // An item is tracked while an account lists it as a custom item, or it is in (not missing from)
 // the inventory of a steam64id an account lists
 function isItemTracked(itemName) {
-  const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(itemName)?.id;
+  const itemId = itemNames.getItemId(itemName);
   if (itemId) return getUidsForItem(itemId).size > 0;
   return readAccounts().some((account) => (account.customItems || []).includes(itemName));
 }
 
 // Fetch inventory for one steam64id, upsert to DB, enqueue found items for pricing
 async function processInventoryForSteamId(steam64id, enqueuePrice) {
-  if (db.isBad('steam64id', steam64id)) {
+  if (badEntries.isBad('steam64id', steam64id)) {
     logger.warn({ steam64id }, 'inventory - skipping bad steam64id');
     return;
   }
@@ -100,9 +89,7 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
     recordSteamSuccess('steam64id', steam64id);
     const durationMs = Date.now() - fetchStart;
     logger.info({ steam64id, itemCount: descriptions.length, durationMs }, 'inventory - fetched');
-    db.prepare(
-      'INSERT INTO inventory_fetches (steam64id, item_count, duration_ms, fetched_at) VALUES (?, ?, ?, ?)'
-    ).run(steam64id, descriptions.length, durationMs, Math.floor(Date.now() / 1000));
+    inventoryFetches.createFetch(steam64id, descriptions.length, durationMs, Math.floor(Date.now() / 1000));
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
     if (isRateLimit) {
@@ -120,7 +107,7 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
         return 'retry';
       }
     }
-    db.markBad('steam64id', steam64id, err.message);
+    badEntries.markBad('steam64id', steam64id, err.message);
     logger.warn({ steam64id, reason: err.message }, 'inventory - marked steam64id as bad');
     return;
   }
@@ -130,18 +117,18 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
 
   for (const d of descriptions) {
     if (!d.market_hash_name) continue;
-    const itemId = db.getOrCreateItemId(d.market_hash_name);
-    upsertInvItem.run(steam64id, itemId, now, now);
+    const itemId = itemNames.getOrCreateItemId(d.market_hash_name);
+    inventoryItems.upsertSeen(steam64id, itemId, now);
     foundItemIds.push(itemId);
     enqueuePrice(d.market_hash_name);
   }
 
-  markMissing.run(now, steam64id, JSON.stringify(foundItemIds));
+  inventoryItems.markMissingExcept(steam64id, foundItemIds, now);
 }
 
 // Fetch price for one item, insert snapshot, detect spikes
 async function processPriceForItem(itemName) {
-  if (db.isBad('item', itemName)) {
+  if (badEntries.isBad('item', itemName)) {
     logger.warn({ itemName }, 'price - skipping bad item');
     return;
   }
@@ -167,13 +154,13 @@ async function processPriceForItem(itemName) {
         return 'retry';
       }
     }
-    db.markBad('item', itemName, err.message);
+    badEntries.markBad('item', itemName, err.message);
     logger.warn({ itemName, reason: err.message }, 'price - marked item as bad');
     return;
   }
 
   if (!priceData || priceData.lowest_price === null) {
-    db.markBad('item', itemName, 'Steam returned no price data (success=false)');
+    badEntries.markBad('item', itemName, 'Steam returned no price data (success=false)');
     logger.warn({ itemName }, 'price - marked item as bad, no price data from Steam');
     return;
   }
@@ -181,48 +168,21 @@ async function processPriceForItem(itemName) {
   const { scanMs, alertThreshold, realertThreshold } = getRuleForPrice(priceData.lowest_price);
 
   const scanTime = Math.floor(Date.now() / 1000);
-  const itemId = db.getOrCreateItemId(itemName);
-  const sevenDayAgo = scanTime - SEVEN_DAYS_SECS;
-
-  const row = db
-    .prepare(
-      `
-    SELECT MIN(lowest_price) AS seven_day_low
-    FROM price_snapshots
-    WHERE item_id = ? AND captured_at >= ? AND lowest_price IS NOT NULL
-  `
-    )
-    .get(itemId, sevenDayAgo);
-
-  db.prepare(
-    `
-    INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at)
-    VALUES (?, ?, ?, ?, ?)
-  `
-  ).run(itemId, priceData.lowest_price, priceData.median_price, priceData.volume, scanTime);
+  const itemId = itemNames.getOrCreateItemId(itemName);
+  // Read before this snapshot is added, so the current price isn't part of its own baseline
+  const sevenDayLow = priceSnapshots.getLowestPriceSince(itemId, scanTime - SEVEN_DAYS_SECS);
+  priceSnapshots.createSnapshot(itemId, priceData.lowest_price, priceData.median_price, priceData.volume, scanTime);
 
   // queue requires this module, so it is loaded lazily here and in runScan
   const { priceQueueSize } = require('./queue').getQueueState();
   logger.info({ itemName, lowest_price: priceData.lowest_price, priceQueueSize }, 'price - snapshot recorded');
 
-  const sevenDayLow = row && row.seven_day_low;
-
   if (sevenDayLow && sevenDayLow > 0 && priceData.lowest_price >= sevenDayLow * alertThreshold) {
-    const lastAlert = db
-      .prepare('SELECT price_at_alert, created_at FROM alerts WHERE item_id = ? ORDER BY created_at DESC LIMIT 1')
-      .get(itemId);
+    const lastAlert = alerts.getLastAlert(itemId);
 
     let shouldAlert = true;
     if (lastAlert && priceData.lowest_price < sevenDayLow * realertThreshold) {
-      const spikeReset = db
-        .prepare(
-          `
-        SELECT 1 FROM price_snapshots
-        WHERE item_id = ? AND captured_at > ? AND lowest_price < ? * ?
-        LIMIT 1
-      `
-        )
-        .get(itemId, lastAlert.created_at, sevenDayLow, alertThreshold);
+      const spikeReset = priceSnapshots.hasPriceBelowSince(itemId, lastAlert.created_at, sevenDayLow, alertThreshold);
 
       if (!spikeReset) {
         shouldAlert = false;
@@ -236,18 +196,9 @@ async function processPriceForItem(itemName) {
     if (shouldAlert) {
       const spikePct = ((priceData.lowest_price - sevenDayLow) / sevenDayLow) * 100;
 
-      const alertId = db
-        .prepare(
-          `
-        INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `
-        )
-        .run(itemId, spikePct, priceData.lowest_price, sevenDayLow, scanTime).lastInsertRowid;
-
-      const insertRecipient = db.prepare('INSERT OR IGNORE INTO alert_recipients (alert_id, uid) VALUES (?, ?)');
+      const alertId = alerts.createAlert(itemId, spikePct, priceData.lowest_price, sevenDayLow, scanTime);
       for (const uid of getUidsForItem(itemId)) {
-        insertRecipient.run(alertId, uid);
+        alertRecipients.addRecipient(alertId, uid);
       }
 
       logger.warn(

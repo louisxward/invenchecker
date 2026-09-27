@@ -1,20 +1,9 @@
 'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const Database = require('better-sqlite3');
-const { DB_PATH: dbPath } = require('./config');
-
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-
-const db = new Database(dbPath);
-
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-// Schema setup and migrations run in one transaction, so a failure part-way leaves the
-// database as it was instead of half-migrated (which the checks below would then skip).
-const migrate = db.transaction(() => {
+// The schema has no user_version: each step detects what it needs from the tables and columns
+// that exist, so it is safe to run on every start. init() runs it in one transaction, so a failure
+// part-way leaves the database as it was instead of half-migrated (which the checks would then skip).
+function migrate(db) {
   // item_names: one row per unique market_hash_name string
   db.exec(`
     CREATE TABLE IF NOT EXISTS item_names (
@@ -167,65 +156,6 @@ const migrate = db.transaction(() => {
 
     CREATE INDEX IF NOT EXISTS idx_inv_fetches ON inventory_fetches(steam64id, fetched_at);
   `);
-});
-
-migrate();
-
-// ── In-memory name→id cache ───────────────────────────────────────────────────
-
-const nameCache = new Map();
-
-function getOrCreateItemId(name) {
-  if (nameCache.has(name)) return nameCache.get(name);
-  db.prepare('INSERT OR IGNORE INTO item_names (name) VALUES (?)').run(name);
-  const { id } = db.prepare('SELECT id FROM item_names WHERE name = ?').get(name);
-  nameCache.set(name, id);
-  return id;
 }
 
-function isBad(type, value) {
-  return !!db.prepare('SELECT 1 FROM bad_entries WHERE type = ? AND value = ?').get(type, value);
-}
-
-function markBad(type, value, reason) {
-  db.prepare('INSERT OR REPLACE INTO bad_entries (type, value, reason, added_at) VALUES (?, ?, ?, ?)').run(
-    type,
-    value,
-    reason,
-    Math.floor(Date.now() / 1000)
-  );
-}
-
-function getBadReason(type, value) {
-  return db.prepare('SELECT reason FROM bad_entries WHERE type = ? AND value = ?').get(type, value)?.reason ?? null;
-}
-
-// Most recent price snapshot for an item name: { last, lowest_price }, or undefined if never priced
-function getLastPriceSnapshot(itemName) {
-  return db
-    .prepare(
-      `SELECT ps.captured_at AS last, ps.lowest_price
-       FROM price_snapshots ps
-       WHERE ps.item_id = (SELECT id FROM item_names WHERE name = ?)
-       ORDER BY ps.captured_at DESC
-       LIMIT 1`
-    )
-    .get(itemName);
-}
-
-// Unix seconds of the last successful inventory fetch, or 0 if there has been none
-function getLastInventoryFetchAt(steam64id) {
-  return (
-    db.prepare('SELECT MAX(fetched_at) AS last FROM inventory_fetches WHERE steam64id = ?').get(steam64id)?.last ?? 0
-  );
-}
-
-// Attach helpers so existing `const db = require('./db')` imports keep working
-db.getOrCreateItemId = getOrCreateItemId;
-db.isBad = isBad;
-db.markBad = markBad;
-db.getBadReason = getBadReason;
-db.getLastPriceSnapshot = getLastPriceSnapshot;
-db.getLastInventoryFetchAt = getLastInventoryFetchAt;
-
-module.exports = db;
+module.exports = { migrate };

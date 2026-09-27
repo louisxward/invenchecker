@@ -12,6 +12,7 @@ jest.mock('../src/steam', () => ({
 
 describe('queue re-enqueueing', () => {
   let db;
+  let itemNames;
   let queue;
 
   const STEAM_ID = '76561198000000040';
@@ -24,11 +25,14 @@ describe('queue re-enqueueing', () => {
   function holdItem(steam64id, name, missing = 0) {
     db.prepare(
       'INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen, missing) VALUES (?, ?, 1, 1, ?)'
-    ).run(steam64id, db.getOrCreateItemId(name), missing);
+    ).run(steam64id, itemNames.getOrCreateItemId(name), missing);
   }
 
   beforeAll(() => {
-    db = require('../src/db');
+    const database = require('../src/database');
+    database.init();
+    db = database.getDb();
+    itemNames = require('../src/repositories/itemNames');
     queue = require('../src/queue');
   });
 

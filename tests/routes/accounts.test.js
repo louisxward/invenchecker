@@ -14,6 +14,7 @@ describe('Accounts routes', () => {
   let app;
 
   beforeAll(() => {
+    require('../../src/database').init();
     app = express();
     app.use(express.json());
     app.use('/accounts', require('../../src/routes/accounts'));

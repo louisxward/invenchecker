@@ -22,6 +22,8 @@ jest.mock('../src/queue', () => ({
 
 describe('Scanner', () => {
   let db;
+  let itemNames;
+  let badEntries;
   let runScan;
   let scanState;
   let processInventoryForSteamId;
@@ -39,7 +41,7 @@ describe('Scanner', () => {
   }
 
   function insertSnapshot(itemName, price, daysAgo = 0) {
-    const itemId = db.getOrCreateItemId(itemName);
+    const itemId = itemNames.getOrCreateItemId(itemName);
     const capturedAt = Math.floor(Date.now() / 1000) - daysAgo * 24 * 60 * 60;
     db.prepare(
       'INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)'
@@ -48,7 +50,11 @@ describe('Scanner', () => {
   }
 
   beforeAll(() => {
-    db = require('../src/db');
+    const database = require('../src/database');
+    database.init();
+    db = database.getDb();
+    itemNames = require('../src/repositories/itemNames');
+    badEntries = require('../src/repositories/badEntries');
     ({ runScan, scanState, processInventoryForSteamId, processPriceForItem } = require('../src/scanner'));
     steam = require('../src/steam');
     queue = require('../src/queue');
@@ -130,13 +136,13 @@ describe('Scanner', () => {
     it('marks a steam64id as bad on access error (400/403)', async () => {
       steam.fetchInventory.mockRejectedValue(new Error(`Cannot access inventory for ${STEAM_ID}`));
       await processInventoryForSteamId(STEAM_ID, jest.fn());
-      expect(db.isBad('steam64id', STEAM_ID)).toBe(true);
+      expect(badEntries.isBad('steam64id', STEAM_ID)).toBe(true);
     });
 
     it('does not mark a steam64id as bad on rate limit', async () => {
       steam.fetchInventory.mockRejectedValue(new Error(`Rate limited fetching inventory for ${STEAM_ID}`));
       await processInventoryForSteamId(STEAM_ID, jest.fn());
-      expect(db.isBad('steam64id', STEAM_ID)).toBe(false);
+      expect(badEntries.isBad('steam64id', STEAM_ID)).toBe(false);
     });
 
     it('returns rate_limited when inventory fetch is rate limited', async () => {
@@ -152,11 +158,11 @@ describe('Scanner', () => {
       steam.fetchInventory.mockRejectedValue(error);
       const result = await processInventoryForSteamId(STEAM_ID, jest.fn());
       expect(result).toBe('retry');
-      expect(db.isBad('steam64id', STEAM_ID)).toBe(false);
+      expect(badEntries.isBad('steam64id', STEAM_ID)).toBe(false);
     });
 
     it('skips previously bad steam64ids', async () => {
-      db.markBad('steam64id', STEAM_ID, 'manual');
+      badEntries.markBad('steam64id', STEAM_ID, 'manual');
       await processInventoryForSteamId(STEAM_ID, jest.fn());
       expect(steam.fetchInventory).not.toHaveBeenCalled();
     });
@@ -178,19 +184,19 @@ describe('Scanner', () => {
     it('marks item as bad when Steam returns no price data', async () => {
       steam.fetchPrice.mockResolvedValue(null);
       await processPriceForItem(ITEM_NAME);
-      expect(db.isBad('item', ITEM_NAME)).toBe(true);
+      expect(badEntries.isBad('item', ITEM_NAME)).toBe(true);
     });
 
     it('marks item as bad on non-rate-limit fetch error', async () => {
       steam.fetchPrice.mockRejectedValue(new Error(`Failed to fetch price for "${ITEM_NAME}": HTTP 404`));
       await processPriceForItem(ITEM_NAME);
-      expect(db.isBad('item', ITEM_NAME)).toBe(true);
+      expect(badEntries.isBad('item', ITEM_NAME)).toBe(true);
     });
 
     it('does not mark item as bad on rate limit', async () => {
       steam.fetchPrice.mockRejectedValue(new Error(`Rate limited fetching price for "${ITEM_NAME}"`));
       await processPriceForItem(ITEM_NAME);
-      expect(db.isBad('item', ITEM_NAME)).toBe(false);
+      expect(badEntries.isBad('item', ITEM_NAME)).toBe(false);
     });
 
     it('returns rate_limited when price fetch is rate limited', async () => {
@@ -206,11 +212,11 @@ describe('Scanner', () => {
       steam.fetchPrice.mockRejectedValue(error);
       const result = await processPriceForItem(ITEM_NAME);
       expect(result).toBe('retry');
-      expect(db.isBad('item', ITEM_NAME)).toBe(false);
+      expect(badEntries.isBad('item', ITEM_NAME)).toBe(false);
     });
 
     it('skips previously bad items', async () => {
-      db.markBad('item', ITEM_NAME, 'manual');
+      badEntries.markBad('item', ITEM_NAME, 'manual');
       await processPriceForItem(ITEM_NAME);
       expect(steam.fetchPrice).not.toHaveBeenCalled();
     });
@@ -373,14 +379,14 @@ describe('Scanner', () => {
 
     it('retries an item instead of marking it bad', async () => {
       expect(await failPrice('5xx once', true)).toBe('retry');
-      expect(db.isBad('item', '5xx once')).toBe(false);
+      expect(badEntries.isBad('item', '5xx once')).toBe(false);
     });
 
     it('marks an item bad after 3 server errors while other requests succeed', async () => {
       expect(await failPrice('5xx item', true)).toBe('retry');
       expect(await failPrice('5xx item', true)).toBe('retry');
       expect(await failPrice('5xx item', true)).toBeUndefined();
-      expect(db.isBad('item', '5xx item')).toBe(true);
+      expect(badEntries.isBad('item', '5xx item')).toBe(true);
     });
 
     it('never marks items bad while every request fails (an outage)', async () => {
@@ -388,8 +394,8 @@ describe('Scanner', () => {
         expect(await failPrice('outage A', false)).toBe('retry');
         expect(await failPrice('outage B', false)).toBe('retry');
       }
-      expect(db.isBad('item', 'outage A')).toBe(false);
-      expect(db.isBad('item', 'outage B')).toBe(false);
+      expect(badEntries.isBad('item', 'outage A')).toBe(false);
+      expect(badEntries.isBad('item', 'outage B')).toBe(false);
     });
 
     it('starts counting again after the item succeeds', async () => {
@@ -399,7 +405,7 @@ describe('Scanner', () => {
       await processPriceForItem('5xx flaky');
       expect(await failPrice('5xx flaky', true)).toBe('retry');
       expect(await failPrice('5xx flaky', true)).toBe('retry');
-      expect(db.isBad('item', '5xx flaky')).toBe(false);
+      expect(badEntries.isBad('item', '5xx flaky')).toBe(false);
     });
 
     it('marks a steam64id bad after 3 server errors while other inventories load', async () => {
@@ -411,13 +417,13 @@ describe('Scanner', () => {
         const result = await processInventoryForSteamId(id, jest.fn());
         expect(result).toBe(i < 2 ? 'retry' : undefined);
       }
-      expect(db.isBad('steam64id', id)).toBe(true);
+      expect(badEntries.isBad('steam64id', id)).toBe(true);
     });
 
     it('still marks an item bad straight away on a 4xx', async () => {
       steam.fetchPrice.mockRejectedValueOnce(serverError(404));
       expect(await processPriceForItem('4xx item')).toBeUndefined();
-      expect(db.isBad('item', '4xx item')).toBe(true);
+      expect(badEntries.isBad('item', '4xx item')).toBe(true);
     });
   });
 });

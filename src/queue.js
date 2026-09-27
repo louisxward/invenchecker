@@ -10,10 +10,16 @@ const {
 } = require('./config');
 const logger = require('./logger');
 const { readAccounts } = require('./accountStore');
-const db = require('./db');
+const inventoryFetches = require('./repositories/inventoryFetches');
+const priceSnapshots = require('./repositories/priceSnapshots');
 const { getRuleForPrice } = require('./rules');
 const { processInventoryForSteamId, processPriceForItem, isSteam64idTracked, isItemTracked } = require('./scanner');
 const { sleep } = require('./steam');
+
+// Unix seconds of the last successful inventory fetch, or 0 if there has been none
+function lastFetchedAt(steam64id) {
+  return inventoryFetches.getLastFetch(steam64id)?.fetched_at ?? 0;
+}
 
 // Two FIFO queues keyed by their natural identifier (steam64id / itemName).
 // Using Map preserves insertion order, giving FIFO semantics.
@@ -47,10 +53,10 @@ function enqueuePrice(itemName) {
 
 function enqueuePriceIfDue(itemName) {
   if (priceQueue.has(itemName)) return;
-  const row = db.getLastPriceSnapshot(itemName);
-  if (row) {
-    const scanMs = getRuleForPrice(row.lowest_price).scanMs;
-    const elapsedMs = (Math.floor(Date.now() / 1000) - row.last) * 1000;
+  const last = priceSnapshots.getLatestSnapshot(itemName);
+  if (last) {
+    const scanMs = getRuleForPrice(last.lowest_price).scanMs;
+    const elapsedMs = (Math.floor(Date.now() / 1000) - last.captured_at) * 1000;
     if (elapsedMs < scanMs) {
       logger.debug({ itemName, elapsedMs, scanMs }, 'price - not yet due, skipping');
       return;
@@ -61,7 +67,7 @@ function enqueuePriceIfDue(itemName) {
 
 function enqueueInventoryIfDue(steam64id) {
   if (inventoryQueue.has(steam64id) || processingInventory.has(steam64id)) return;
-  const elapsedMs = (Math.floor(Date.now() / 1000) - db.getLastInventoryFetchAt(steam64id)) * 1000;
+  const elapsedMs = (Math.floor(Date.now() / 1000) - lastFetchedAt(steam64id)) * 1000;
   if (elapsedMs < REENQUEUE_DELAY_MS) {
     logger.debug({ steam64id, elapsedMs }, 'inventory - not yet due, skipping');
     return;
@@ -172,7 +178,7 @@ function startQueues() {
 
   for (const account of accounts) {
     for (const steam64id of account.steam64ids || []) {
-      const elapsedMs = (nowSec - db.getLastInventoryFetchAt(steam64id)) * 1000;
+      const elapsedMs = (nowSec - lastFetchedAt(steam64id)) * 1000;
       if (elapsedMs >= REENQUEUE_DELAY_MS) {
         enqueueInventory(steam64id);
       } else {
@@ -183,9 +189,9 @@ function startQueues() {
     }
 
     for (const item of account.customItems || []) {
-      const row = db.getLastPriceSnapshot(item);
-      const scanMs = row?.lowest_price != null ? getRuleForPrice(row.lowest_price).scanMs : REENQUEUE_DELAY_MS;
-      const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
+      const last = priceSnapshots.getLatestSnapshot(item);
+      const scanMs = last?.lowest_price != null ? getRuleForPrice(last.lowest_price).scanMs : REENQUEUE_DELAY_MS;
+      const elapsedMs = (nowSec - (last?.captured_at ?? 0)) * 1000;
       if (elapsedMs >= scanMs) {
         enqueuePrice(item);
       } else {

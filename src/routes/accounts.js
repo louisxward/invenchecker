@@ -5,7 +5,10 @@ const express = require('express');
 const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require('../config');
 const logger = require('../logger');
 const { readAccounts, writeAccounts } = require('../accountStore');
-const db = require('../db');
+const badEntries = require('../repositories/badEntries');
+const inventoryFetches = require('../repositories/inventoryFetches');
+const inventoryItems = require('../repositories/inventoryItems');
+const priceSnapshots = require('../repositories/priceSnapshots');
 const { enqueueInventoryIfDue, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require('../queue');
 const { getRuleForPrice } = require('../rules');
 const { fetchInventory } = require('../steam');
@@ -51,11 +54,11 @@ function validateLists(steam64ids, customItems) {
     if (customItems.length > MAX_CUSTOM_ITEMS) return `Too many customItems (max ${MAX_CUSTOM_ITEMS})`;
   }
   for (const id of steam64ids ?? []) {
-    const reason = db.getBadReason('steam64id', id);
+    const reason = badEntries.getBadReason('steam64id', id);
     if (reason) return `steam64id ${id} was previously rejected: ${reason}`;
   }
   for (const item of customItems ?? []) {
-    const reason = db.getBadReason('item', item);
+    const reason = badEntries.getBadReason('item', item);
     if (reason) return `item "${item}" was previously rejected: ${reason}`;
   }
   return null;
@@ -169,7 +172,7 @@ router.post('/:uid/steam64ids', (req, res) => {
   const { steam64id } = req.body;
   if (!steam64id) return res.status(400).json({ error: 'steam64id is required' });
   if (!isValidSteam64id(steam64id)) return res.status(400).json({ error: `Invalid steam64id: ${steam64id}` });
-  const badIdReason = db.getBadReason('steam64id', steam64id);
+  const badIdReason = badEntries.getBadReason('steam64id', steam64id);
   if (badIdReason)
     return res.status(400).json({ error: `steam64id ${steam64id} was previously rejected: ${badIdReason}` });
 
@@ -203,7 +206,7 @@ router.post('/:uid/customItems', (req, res) => {
   if (!account) return res.status(404).json({ error: 'Account not found' });
   const { item } = req.body;
   if (typeof item !== 'string' || !item) return res.status(400).json({ error: 'item is required' });
-  const badItemReason = db.getBadReason('item', item);
+  const badItemReason = badEntries.getBadReason('item', item);
   if (badItemReason) return res.status(400).json({ error: `item "${item}" was previously rejected: ${badItemReason}` });
 
   if (!account.customItems.includes(item)) {
@@ -252,39 +255,23 @@ router.get('/:uid/summary', (req, res) => {
   const { account } = getAccount(req.params.uid);
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  const latestPrice = db.prepare(`
-    SELECT ps.lowest_price, ps.median_price, ps.volume, ps.captured_at
-    FROM price_snapshots ps
-    WHERE ps.item_id = (SELECT id FROM item_names WHERE name = ?)
-    ORDER BY ps.captured_at DESC
-    LIMIT 1
-  `);
-
   // Inventory items per steam64id
-  const invQuery = db.prepare(`
-    SELECT n.name AS market_hash_name, ii.first_seen, ii.last_seen, ii.missing
-    FROM inventory_items ii
-    JOIN item_names n ON n.id = ii.item_id
-    WHERE ii.steam64id = ?
-    ORDER BY n.name
-  `);
-
   const steam64ids = {};
   for (const id of account.steam64ids || []) {
-    const rows = invQuery.all(id);
+    const rows = inventoryItems.listForSteam64id(id);
     steam64ids[id] = rows.map((r) => ({
       market_hash_name: r.market_hash_name,
       first_seen: r.first_seen,
       last_seen: r.last_seen,
       missing: r.missing === 1,
-      price: latestPrice.get(r.market_hash_name) ?? null,
+      price: priceSnapshots.getLatestSnapshot(r.market_hash_name) ?? null,
     }));
   }
 
   // Custom items with latest price
   const customItems = (account.customItems || []).map((name) => ({
     market_hash_name: name,
-    price: latestPrice.get(name) ?? null,
+    price: priceSnapshots.getLatestSnapshot(name) ?? null,
   }));
 
   res.json({ uid: account.uid, friendlyName: account.friendlyName, steam64ids, customItems });
@@ -297,18 +284,10 @@ router.get('/:uid/progress', (req, res) => {
 
   const reenqueueDelaySecs = Math.floor(REENQUEUE_DELAY_MS / 1000);
 
-  const lastFetchStmt = db.prepare(`
-    SELECT item_count, duration_ms, fetched_at
-    FROM inventory_fetches
-    WHERE steam64id = ?
-    ORDER BY fetched_at DESC
-    LIMIT 1
-  `);
-
   const steam64ids = {};
   for (const id of account.steam64ids || []) {
     const queued = isInventoryQueued(id);
-    const lastFetch = lastFetchStmt.get(id) ?? null;
+    const lastFetch = inventoryFetches.getLastFetch(id) ?? null;
     steam64ids[id] = {
       queued,
       lastFetch,
@@ -316,18 +295,11 @@ router.get('/:uid/progress', (req, res) => {
     };
   }
 
-  const lastPriceStmt = db.prepare(`
-    SELECT ps.lowest_price, ps.captured_at
-    FROM price_snapshots ps
-    WHERE ps.item_id = (SELECT id FROM item_names WHERE name = ?)
-    ORDER BY ps.captured_at DESC
-    LIMIT 1
-  `);
-
   const customItems = {};
   for (const name of account.customItems || []) {
     const queued = isPriceQueued(name);
-    const lastPrice = lastPriceStmt.get(name) ?? null;
+    const latest = priceSnapshots.getLatestSnapshot(name);
+    const lastPrice = latest ? { lowest_price: latest.lowest_price, captured_at: latest.captured_at } : null;
     customItems[name] = {
       queued,
       lastPrice,
@@ -356,18 +328,7 @@ router.get('/:uid/prices', (req, res) => {
 
   if (items.length === 0) return res.json({});
 
-  const placeholders = items.map(() => '?').join(', ');
-  const snapshots = db
-    .prepare(
-      `
-    SELECT n.name AS market_hash_name, ps.lowest_price, ps.median_price, ps.volume, ps.captured_at
-    FROM price_snapshots ps
-    JOIN item_names n ON n.id = ps.item_id
-    WHERE ps.item_id IN (SELECT id FROM item_names WHERE name IN (${placeholders})) AND ps.captured_at >= ?
-    ORDER BY n.name, ps.captured_at DESC
-  `
-    )
-    .all(...items, since);
+  const snapshots = priceSnapshots.listSnapshotsSince(items, since);
 
   const grouped = {};
   for (const s of snapshots) {

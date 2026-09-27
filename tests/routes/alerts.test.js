@@ -6,9 +6,13 @@ const express = require('express');
 describe('Alerts routes', () => {
   let app;
   let db;
+  let itemNames;
 
   beforeAll(() => {
-    db = require('../../src/db');
+    const database = require('../../src/database');
+    database.init();
+    db = database.getDb();
+    itemNames = require('../../src/repositories/itemNames');
     app = express();
     app.use(express.json());
     app.use('/alerts', require('../../src/routes/alerts'));
@@ -20,7 +24,7 @@ describe('Alerts routes', () => {
   });
 
   function insertAlert(itemName, uid) {
-    const itemId = db.getOrCreateItemId(itemName);
+    const itemId = itemNames.getOrCreateItemId(itemName);
     const now = Math.floor(Date.now() / 1000);
     const alertId = db
       .prepare(

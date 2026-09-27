@@ -22,9 +22,13 @@ const HOUR = 60 * 60;
 describe('GET /accounts/:uid/progress', () => {
   let app;
   let db;
+  let itemNames;
 
   beforeAll(() => {
-    db = require('../../src/db');
+    const database = require('../../src/database');
+    database.init();
+    db = database.getDb();
+    itemNames = require('../../src/repositories/itemNames');
     app = express();
     app.use(express.json());
     app.use('/accounts', require('../../src/routes/accounts'));
@@ -36,7 +40,7 @@ describe('GET /accounts/:uid/progress', () => {
 
   function snapshot(name, price, capturedAt) {
     db.prepare('INSERT INTO price_snapshots (item_id, lowest_price, captured_at) VALUES (?, ?, ?)').run(
-      db.getOrCreateItemId(name),
+      itemNames.getOrCreateItemId(name),
       price,
       capturedAt
     );

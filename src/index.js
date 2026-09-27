@@ -14,11 +14,13 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-// Opening the database runs the schema migrations, before the API or the queues can use it
-const db = require('./db');
 const { accountsPath } = require('./accountStore');
-const { startQueues } = require('./queue');
 const { createApp } = require('./app');
+const database = require('./database');
+const { startQueues } = require('./queue');
+
+// Migrations run here, before the queues or the API can use the database
+database.init();
 
 // Ensure accounts file exists
 fs.mkdirSync(path.dirname(accountsPath), { recursive: true });
@@ -50,7 +52,7 @@ function shutdown(signal) {
     process.exit(1);
   }, 8000).unref();
   server.close(() => {
-    db.close();
+    database.close();
     logger.info('shutdown - done');
     process.exit(0);
   });

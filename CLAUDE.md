@@ -24,16 +24,27 @@ src/
   app.js           Express app (createApp) with the global error handler
   config.js        env vars and file paths
   logger.js        pino, LOG_LEVEL; pino-pretty when NODE_ENV=development
-  db.js            opens the database, runs schema migrations (one transaction), and attaches helpers
+  database/        index.js (init, getDb, close), migrations.js (migrate, run in one transaction by init)
+  repositories/    one file per table, all SQL lives here
   accountStore.js  readAccounts/writeAccounts for accounts.json
   rules.js         price-tier rules from rules.json (cached; changes need a restart)
-  steam.js         Steam inventory + priceoverview clients (10s timeout), isNetworkError
+  steam.js         Steam inventory + priceoverview clients (10s timeout), isNetworkError, isServerError
   scanner.js       processes one inventory or one price: snapshots, alerts, bad entries, tracking checks
   queue.js         the two FIFO queues and their workers, scheduling of re-scans
   routes/          index.js (/health), accounts.js, alerts.js
 ```
 
-`db.js` exports the better-sqlite3 `Database` itself with helpers attached (`getOrCreateItemId`, `isBad`, `markBad`, `getBadReason`, `getLastPriceSnapshot`, `getLastInventoryFetchAt`). SQL is still spread across `scanner.js`, `queue.js` and the routes.
+The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `database/`. Only repositories and migrations run SQL. `index.js` calls `database.init()` before starting the queues and the API; anything that calls `getDb()` before that throws. Repositories are synchronous (better-sqlite3), take plain values, and log `'repository - fnName'` at debug.
+
+| Repository         | Table                                                                    |
+| ------------------ | ------------------------------------------------------------------------ |
+| `itemNames`        | `item_names`; `getOrCreateItemId` caches ids for the current connection  |
+| `priceSnapshots`   | `price_snapshots`: create, 7-day low, spike-reset check, latest, history |
+| `alerts`           | `alerts`: create, last for an item, list                                 |
+| `alertRecipients`  | `alert_recipients`: add, unresolved per uid, resolve one / all           |
+| `inventoryItems`   | `inventory_items`: upsert seen, mark missing, holders of an item, list   |
+| `inventoryFetches` | `inventory_fetches`: record, last fetch                                  |
+| `badEntries`       | `bad_entries`: isBad, markBad, getBadReason                              |
 
 ## Persistence
 
@@ -53,7 +64,7 @@ src/
 - Logging is structured, one line per event: `logger.info({ steam64id }, 'inventory - fetched')`. The area is short and lowercase (`startup`, `shutdown`, `process`, `api`, `queue`, `inventory`, `price`, `alert`, `scan`, `accounts`, `rules`). Errors pass `{ err }`.
 - Import order: `node:` built-ins, packages, `config`/`logger`, then internal modules.
 - Catch variables are `err`; `===` except `== null`.
-- Tests: `tests/setup.js` gives each Jest worker an in-memory DB, a temp accounts.json and a missing rules.json (so the built-in rule applies). `tests/db.test.js` runs the migrations against real temp files. Route tests mount a single router on a bare Express app; `health.test.js` uses `createApp()`.
+- Tests: `tests/setup.js` points each Jest worker at an in-memory DB, a temp accounts.json and a missing rules.json (so the built-in rule applies). Test files that touch the database call `require('../src/database').init()` in `beforeAll`, and may use `getDb()` for fixtures. `tests/db.test.js` runs the migrations against real temp files (`loadModules` sets `DB_PATH` before config is loaded). Route tests mount a single router on a bare Express app; `health.test.js` uses `createApp()`.
 
 ## Gotchas
 

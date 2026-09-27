@@ -1,23 +1,33 @@
 'use strict';
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const Database = require('better-sqlite3');
 
-// Opens src/db.js against a real file so migrations run as they would on startup
-function openDb(dbPath) {
+// Fresh instances of the database module and repositories, with config's DB_PATH set to dbPath
+function loadModules(dbPath) {
   const saved = process.env.DB_PATH;
   process.env.DB_PATH = dbPath;
-  let db;
+  const modules = {};
   try {
     jest.isolateModules(() => {
-      db = require('../src/db');
+      modules.database = require('../src/database');
+      modules.itemNames = require('../src/repositories/itemNames');
+      modules.badEntries = require('../src/repositories/badEntries');
     });
   } finally {
     process.env.DB_PATH = saved;
   }
-  return db;
+  return modules;
+}
+
+// Runs init() against a real file, as on startup. Returns the connection, with the repositories
+// from the same module instance attached for convenience.
+function openDb(dbPath) {
+  const { database, itemNames, badEntries } = loadModules(dbPath);
+  database.init();
+  return Object.assign(database.getDb(), { itemNames, badEntries });
 }
 
 function columns(db, table) {
@@ -53,6 +63,25 @@ function createLegacyDb(dbPath) {
   return raw;
 }
 
+describe('database module', () => {
+  it('getDb throws before init', () => {
+    jest.isolateModules(() => {
+      expect(() => require('../src/database').getDb()).toThrow('not initialised');
+    });
+  });
+
+  it('drops cached item ids when the connection changes', () => {
+    const { database, itemNames } = loadModules(':memory:');
+    database.init();
+    expect(itemNames.getOrCreateItemId('A')).toBe(1);
+    database.close();
+    database.init(); // a fresh in-memory database
+    expect(itemNames.getOrCreateItemId('B')).toBe(1);
+    expect(itemNames.getOrCreateItemId('A')).toBe(2);
+    database.close();
+  });
+});
+
 describe('database migrations', () => {
   let dir;
   let dbPath;
@@ -87,14 +116,16 @@ describe('database migrations', () => {
 
   it('is safe to run twice and keeps existing data', () => {
     db = openDb(dbPath);
-    const itemId = db.getOrCreateItemId('Item A');
+    const itemId = db.itemNames.getOrCreateItemId('Item A');
     db.prepare('INSERT INTO price_snapshots (item_id, lowest_price, captured_at) VALUES (?, ?, ?)').run(itemId, 1, 1);
-    db.markBad('item', 'Bad', 'reason');
+    db.badEntries.markBad('item', 'Bad', 'reason');
     db.close();
 
     db = openDb(dbPath);
     expect(db.prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(1);
-    expect(db.isBad('item', 'Bad')).toBe(true);
+    expect(db.badEntries.isBad('item', 'Bad')).toBe(true);
+    // The name cache follows the connection, so ids still match the reopened database
+    expect(db.itemNames.getOrCreateItemId('Item A')).toBe(itemId);
   });
 
   it('migrates the legacy TEXT schema to item_names ids', () => {
@@ -126,7 +157,9 @@ describe('database migrations', () => {
     raw.exec('CREATE TABLE alerts_new (x INTEGER)');
     raw.close();
 
-    expect(() => openDb(dbPath)).toThrow(/alerts_new already exists/);
+    const { database } = loadModules(dbPath);
+    expect(() => database.init()).toThrow(/alerts_new already exists/);
+    expect(() => database.getDb()).toThrow('not initialised');
 
     const check = new Database(dbPath, { readonly: true });
     try {
