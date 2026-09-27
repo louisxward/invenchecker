@@ -1,13 +1,24 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const logger = require('./logger');
+
+// Anything that slips past a handler is logged rather than disappearing or crashing silently
+process.on('unhandledRejection', (err) => {
+  logger.error({ err }, 'Unhandled rejection');
+});
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'Uncaught exception');
+  process.exit(1);
+});
+
+// Opening the database runs the schema migrations, before the API or the queues can use it
 const db = require('./db');
 const { configPath } = require('./config');
 const { startScheduler } = require('./scheduler');
 const { PORT } = require('./appConfig');
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const { createApp } = require('./app');
 
 // Ensure config file exists
 const configDir = path.dirname(configPath);
@@ -20,24 +31,25 @@ if (!fs.existsSync(configPath)) {
 // Start the 6-hour scheduler
 const schedulerTask = startScheduler();
 
-// Express app
-const app = express();
-app.use(express.json());
-app.use(require('./routes'));
-
-// Global error handler
-app.use((err, req, res, _next) => {
-  logger.error({ err, path: req.path }, 'Unhandled request error');
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
-});
-
-const server = app.listen(PORT, () => {
+// Express 5 passes listen errors (such as the port being in use) to this callback
+const server = createApp().listen(PORT, (err) => {
+  if (err) {
+    logger.fatal({ err, port: PORT }, 'API server failed to start');
+    process.exit(1);
+  }
   logger.info({ port: PORT }, 'invenchecker started');
 });
 
-// Graceful shutdown
-function shutdown() {
-  logger.info('Shutting down...');
+// Graceful shutdown. Forces an exit if that takes longer than Docker's 10 second stop timeout allows.
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, 'Shutting down...');
+  setTimeout(() => {
+    logger.error('Shutdown timed out, forcing exit');
+    process.exit(1);
+  }, 8000).unref();
   schedulerTask.stop();
   server.close(() => {
     db.close();
@@ -46,5 +58,5 @@ function shutdown() {
   });
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
