@@ -9,6 +9,7 @@ const db = require('../db');
 const logger = require('../logger');
 const { enqueueInventoryIfDue, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require('../queue');
 const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require('../appConfig');
+const { getRuleForPrice } = require('../rules');
 
 // Express 5 leaves req.body undefined when there is no JSON body; handlers expect an object
 router.use((req, _res, next) => {
@@ -364,7 +365,11 @@ router.get('/:uid/progress', (req, res) => {
     customItems[name] = {
       queued,
       lastPrice,
-      nextScanAt: !queued && lastPrice ? lastPrice.captured_at + reenqueueDelaySecs : null,
+      // Price scans repeat on the interval of the rule for the last price, as the price worker does
+      nextScanAt:
+        !queued && lastPrice
+          ? lastPrice.captured_at + Math.floor(getRuleForPrice(lastPrice.lowest_price).scanMs / 1000)
+          : null,
     };
   }
 
