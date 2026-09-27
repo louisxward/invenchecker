@@ -9,20 +9,31 @@ CS2 inventory price tracker. Monitors Steam inventories for tracked items, recor
 ## Quick Start
 
 ```bash
-# 1. Create required host directory
-mkdir -p data
+# 1. Create the shared network (chowbot joins it too) and the host data directory
+docker network create invenchecker
+sudo mkdir -p /opt/data/invenchecker
 
 # 2. Start the app
 docker compose up --build
 ```
 
-The app runs on port **33001**.
+The app listens on port **33001** inside the `invenchecker` Docker network; it isn't published on the host.
+
+## Data files
+
+All state lives in the data directory: `/opt/data/invenchecker` on the Docker host (mounted at `/app/data`), or `data/` next to `src/` when running locally.
+
+| File              | Contents                                                                  |
+| ----------------- | ------------------------------------------------------------------------- |
+| `accounts.json`   | The tracked accounts. Written by the API, and safe to edit by hand        |
+| `rules.json`      | Optional price-tier rules, edited by hand                                 |
+| `invenchecker.db` | SQLite: item names, price snapshots, alerts, inventory state, bad entries |
 
 ## Configuration
 
 ### accounts.json
 
-Accounts are stored in `data/accounts.json`. You can edit this file directly or use the API. The file is mounted as a Docker volume so changes persist across container restarts.
+Accounts are stored in `accounts.json` in the data directory. It's created empty on first start. You can manage it through the API or edit it directly. The file is re-read on every use, but hand-added steam64ids and custom items are only scheduled for scanning on the next restart or `POST /alerts/scan`.
 
 Example:
 
@@ -30,13 +41,15 @@ Example:
 [
   {
     "uid": "a1b2c3d4e5f6a7b8",
-    ?"friendlyName": "My Account",
-    ?"discordId": "123456789012345678",
-    ?"steam64ids": ["76561198000000000"],
-    ?"customItems": ["AK-47 | Redline (Field-Tested)", "AWP | Dragon Lore (Factory New)"]
+    "friendlyName": "My Account",
+    "discordId": "123456789012345678",
+    "steam64ids": ["76561198000000000"],
+    "customItems": ["AK-47 | Redline (Field-Tested)", "AWP | Dragon Lore (Factory New)"]
   }
 ]
 ```
+
+Only `uid` is required. The other fields can be left out of hand-edited entries.
 
 > **Note:** `customItems` values must match the Steam `market_hash_name` exactly (case-sensitive).
 
@@ -53,7 +66,7 @@ Controls scan interval and alert thresholds per price tier. Rules are evaluated 
 | `alertPct`   | % above 7-day low to trigger an alert                             |
 | `realertPct` | % above 7-day low to allow a re-alert within the same spike event |
 
-Default (`data/rules.json`):
+Without a `rules.json` (or if it's invalid), one built-in rule applies to every price: re-scan every 6 hours, alert at +15%, re-alert at +20%. Example `rules.json`:
 
 ```json
 [
