@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const logger = require('./logger');
-const { RULES_PATH, REENQUEUE_DELAY_MS } = require('./appConfig');
+const { RULES_PATH } = require('./appConfig');
 
 const DEFAULT_RULES = [
   { minPrice: 0, scanHours: 6, alertPct: 15, realertPct: 20 }
