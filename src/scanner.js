@@ -29,19 +29,16 @@ function getUidsForItem(itemId) {
   const uids = new Set();
   const accounts = readConfig();
 
-  const invRows = db
-    .prepare('SELECT DISTINCT steam64id FROM inventory_items WHERE item_id = ? AND missing = 0')
-    .all(itemId);
+  const holders = new Set(
+    db
+      .prepare('SELECT DISTINCT steam64id FROM inventory_items WHERE item_id = ? AND missing = 0')
+      .all(itemId)
+      .map((row) => row.steam64id)
+  );
 
-  const steam64idToUid = new Map();
+  // Several accounts can list the same steam64id, and each of them tracks its items
   for (const account of accounts) {
-    for (const id of account.steam64ids || []) {
-      steam64idToUid.set(id, account.uid);
-    }
-  }
-  for (const row of invRows) {
-    const uid = steam64idToUid.get(row.steam64id);
-    if (uid) uids.add(uid);
+    if ((account.steam64ids || []).some((id) => holders.has(id))) uids.add(account.uid);
   }
 
   const itemName = db.prepare('SELECT name FROM item_names WHERE id = ?').get(itemId)?.name;

@@ -248,6 +248,28 @@ describe('Scanner', () => {
       expect(recipients.map((r) => r.uid)).toContain(UID2);
     });
 
+    it('alerts every account that lists the steam64id holding the item', async () => {
+      const UID2 = 'testuid2';
+      const UID3 = 'testuid3';
+      setAccounts([
+        { uid: UID, steam64ids: [STEAM_ID], customItems: [] },
+        { uid: UID2, steam64ids: ['76561198000000005', STEAM_ID], customItems: [] },
+        { uid: UID3, steam64ids: ['76561198000000006'], customItems: [] },
+      ]);
+      steam.fetchInventory.mockResolvedValue([{ market_hash_name: ITEM_NAME }]);
+      await processInventoryForSteamId(STEAM_ID, jest.fn());
+      insertSnapshot(ITEM_NAME, 10.0, 3);
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.0, median_price: 13.0, volume: 30 });
+
+      await processPriceForItem(ITEM_NAME);
+
+      const uids = db
+        .prepare('SELECT uid FROM alert_recipients ORDER BY uid')
+        .all()
+        .map((r) => r.uid);
+      expect(uids).toEqual([UID, UID2]);
+    });
+
     it('does not create an alert when price is below spike threshold', async () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       insertSnapshot(ITEM_NAME, 10.0, 3);
