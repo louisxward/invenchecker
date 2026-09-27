@@ -1,13 +1,24 @@
 services:
   invenchecker:
     build: .
+    # Runs a minimal init as PID 1 so SIGTERM reaches node and shutdown is clean
+    init: true
     expose:
       - "33001"
     networks:
       - invenchecker
     restart: unless-stopped
+    # Every variable has a default, so the file is optional
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - /opt/data/invenchecker:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 networks:
   invenchecker:
     external: true
