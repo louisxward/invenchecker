@@ -75,10 +75,10 @@ describe('Accounts routes', () => {
     it('returns 409 on duplicate discordId', async () => {
       await request(app)
         .post('/accounts')
-        .send({ friendlyName: 'A', discordId: '222', steam64ids: ['1'] });
+        .send({ friendlyName: 'A', discordId: '222', steam64ids: ['76561198000000010'] });
       const res = await request(app)
         .post('/accounts')
-        .send({ friendlyName: 'B', discordId: '222', steam64ids: ['2'] });
+        .send({ friendlyName: 'B', discordId: '222', steam64ids: ['76561198000000011'] });
       expect(res.status).toBe(409);
     });
   });
@@ -116,7 +116,7 @@ describe('Accounts routes', () => {
           .send({
             friendlyName: 'Test',
             discordId: '333',
-            steam64ids: ['1'],
+            steam64ids: ['76561198000000010'],
           })
       ).body;
       const res = await request(app).get(`/accounts/${created.uid}`);
@@ -138,7 +138,7 @@ describe('Accounts routes', () => {
           .send({
             friendlyName: 'Old',
             discordId: '444',
-            steam64ids: ['1'],
+            steam64ids: ['76561198000000010'],
           })
       ).body;
       const res = await request(app).put(`/accounts/${uid}`).send({ friendlyName: 'New' });
@@ -160,7 +160,7 @@ describe('Accounts routes', () => {
           .send({
             friendlyName: 'ToDelete',
             discordId: '555',
-            steam64ids: ['1'],
+            steam64ids: ['76561198000000010'],
           })
       ).body;
       expect((await request(app).delete(`/accounts/${uid}`)).status).toBe(204);

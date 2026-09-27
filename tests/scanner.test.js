@@ -11,7 +11,9 @@ jest.mock('../src/steam', () => ({
 // Prevent queue workers from starting during tests
 jest.mock('../src/queue', () => ({
   enqueueInventory: jest.fn(),
+  enqueueInventoryIfDue: jest.fn(),
   enqueuePrice: jest.fn(),
+  enqueuePriceIfDue: jest.fn(),
   startQueues: jest.fn(),
   getQueueState: jest.fn().mockReturnValue({ inventoryQueueSize: 0, priceQueueSize: 0 }),
 }));
@@ -64,15 +66,26 @@ describe('Scanner', () => {
     it('does nothing when no accounts are configured', async () => {
       setAccounts([]);
       await runScan();
+      expect(queue.enqueueInventoryIfDue).not.toHaveBeenCalled();
+      expect(queue.enqueuePriceIfDue).not.toHaveBeenCalled();
+    });
+
+    it('enqueues steam64ids and customItems that are due for all accounts', async () => {
+      setAccounts([{ uid: UID, steam64ids: [STEAM_ID], customItems: [ITEM_NAME] }]);
+      await runScan();
+      expect(queue.enqueueInventoryIfDue).toHaveBeenCalledWith(STEAM_ID);
+      expect(queue.enqueuePriceIfDue).toHaveBeenCalledWith(ITEM_NAME);
       expect(queue.enqueueInventory).not.toHaveBeenCalled();
       expect(queue.enqueuePrice).not.toHaveBeenCalled();
     });
 
-    it('enqueues steam64ids and customItems for all accounts', async () => {
+    it('enqueues everything regardless of recency when forced', async () => {
       setAccounts([{ uid: UID, steam64ids: [STEAM_ID], customItems: [ITEM_NAME] }]);
-      await runScan();
+      await runScan(true);
       expect(queue.enqueueInventory).toHaveBeenCalledWith(STEAM_ID);
       expect(queue.enqueuePrice).toHaveBeenCalledWith(ITEM_NAME);
+      expect(queue.enqueueInventoryIfDue).not.toHaveBeenCalled();
+      expect(queue.enqueuePriceIfDue).not.toHaveBeenCalled();
     });
 
     it('updates lastScannedAt on completion', async () => {
@@ -227,15 +240,16 @@ describe('Scanner', () => {
       expect(alert).toBeUndefined();
     });
 
-    it('suppresses duplicate alert when price has not risen 5% above last alert price', async () => {
+    // With no rules.json the default rule applies: alert at +15%, re-alert at +20% over the 7-day low.
+    it('suppresses a re-alert while the spike is still below the re-alert threshold', async () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
       // Insert a prior alert at $12.00
       db.prepare(
         'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 20.0, 12.0, 10.0, Math.floor(Date.now() / 1000) - 60);
-      // Current price $12.50 — spiking but < 5% above $12.00
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.5, median_price: 13.0, volume: 30 });
+      // Current price $11.90 — above the alert threshold ($11.50) but below re-alert ($12.00)
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 11.9, median_price: 13.0, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 
@@ -245,15 +259,15 @@ describe('Scanner', () => {
       expect(allAlerts).toHaveLength(1); // no new alert created
     });
 
-    it('fires a new alert when price rises 5%+ above last alert price', async () => {
+    it('fires a new alert when price reaches the re-alert threshold', async () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
       // Insert a prior alert at $12.00
       db.prepare(
         'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 20.0, 12.0, 10.0, Math.floor(Date.now() / 1000) - 60);
-      // Current price $12.61 — more than 5% above $12.00
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.61, median_price: 13.0, volume: 30 });
+      // Current price $12.00 — at the re-alert threshold (7-day low * 1.20)
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.0, median_price: 13.0, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 
@@ -275,8 +289,8 @@ describe('Scanner', () => {
       db.prepare(
         'INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 11.0, 11.0, 50, alertTime + 60);
-      // Current price $12.10 — spiking again, < 5% above $12.00, but spike reset
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.1, median_price: 12.5, volume: 30 });
+      // Current price $11.90 — below re-alert ($12.00), but the spike reset since the last alert
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 11.9, median_price: 12.5, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 
