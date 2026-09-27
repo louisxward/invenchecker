@@ -19,11 +19,20 @@ router.use((req, _res, next) => {
 function getAccount(uid) {
   const accounts = readConfig();
   const account = accounts.find((a) => a.uid === uid);
+  // Both lists are optional in a hand-edited accounts.json
+  if (account) {
+    account.steam64ids ??= [];
+    account.customItems ??= [];
+  }
   return { accounts, account };
 }
 
 function isValidSteam64id(id) {
   return typeof id === 'string' && /^7656119\d{10}$/.test(id);
+}
+
+function isStringList(value) {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string' && v.length > 0);
 }
 
 function getBadEntryReason(type, value) {
@@ -49,6 +58,9 @@ router.post('/', (req, res) => {
   const invalidId = steam64ids.find((id) => !isValidSteam64id(id));
   if (invalidId) {
     return res.status(400).json({ error: `Invalid steam64id: ${invalidId}` });
+  }
+  if (!isStringList(customItems)) {
+    return res.status(400).json({ error: 'customItems must be an array of item names' });
   }
   if (customItems.length > MAX_CUSTOM_ITEMS) {
     return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
@@ -80,7 +92,7 @@ router.post('/', (req, res) => {
 });
 
 // POST /accounts/discord — create account via Discord, return uid
-// If discordId already exists, returns 409 with the existing uid
+// If discordId already exists, returns 409
 router.post('/discord', (req, res) => {
   const { discordId, friendlyName } = req.body;
 
@@ -116,6 +128,18 @@ router.put('/:uid', (req, res) => {
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const idx = accounts.findIndex((a) => a.uid === req.params.uid);
+  if (req.body.steam64ids !== undefined && !Array.isArray(req.body.steam64ids)) {
+    return res.status(400).json({ error: 'steam64ids must be an array' });
+  }
+  if (req.body.customItems !== undefined && !isStringList(req.body.customItems)) {
+    return res.status(400).json({ error: 'customItems must be an array of item names' });
+  }
+  if (
+    req.body.discordId !== undefined &&
+    accounts.some((a) => a.uid !== account.uid && a.discordId === req.body.discordId)
+  ) {
+    return res.status(409).json({ error: 'Account with this discordId already exists' });
+  }
   if (req.body.steam64ids !== undefined && req.body.steam64ids.length > MAX_STEAM64IDS) {
     return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
   }
@@ -209,7 +233,7 @@ router.post('/:uid/customItems', (req, res) => {
   const { accounts, account } = getAccount(req.params.uid);
   if (!account) return res.status(404).json({ error: 'Account not found' });
   const { item } = req.body;
-  if (!item) return res.status(400).json({ error: 'item is required' });
+  if (typeof item !== 'string' || !item) return res.status(400).json({ error: 'item is required' });
   const badItemReason = getBadEntryReason('item', item);
   if (badItemReason) return res.status(400).json({ error: `item "${item}" was previously rejected: ${badItemReason}` });
 
@@ -231,7 +255,8 @@ router.delete('/:uid/customItems/:item', (req, res) => {
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const idx = accounts.findIndex((a) => a.uid === req.params.uid);
-  const item = decodeURIComponent(req.params.item);
+  // Express has already decoded the param; decoding again breaks names containing '%'
+  const { item } = req.params;
   const pos = accounts[idx].customItems.indexOf(item);
   if (pos === -1) return res.status(404).json({ error: 'item not found on account' });
 

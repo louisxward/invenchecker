@@ -304,4 +304,79 @@ describe('Accounts routes', () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe('input validation', () => {
+    it('POST /accounts rejects customItems that is not an array of names', async () => {
+      for (const customItems of ['AK-47 | Redline (Field-Tested)', [1], ['']]) {
+        const res = await request(app)
+          .post('/accounts')
+          .send({ friendlyName: 'x', discordId: '701', steam64ids: ['76561198000000010'], customItems });
+        expect(res.status).toBe(400);
+      }
+      expect((await request(app).get('/accounts')).body).toHaveLength(0);
+    });
+
+    it('PUT /accounts/:uid rejects steam64ids or customItems that are not arrays', async () => {
+      const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '702' })).body;
+      expect((await request(app).put(`/accounts/${uid}`).send({ steam64ids: '76561198000000010' })).status).toBe(400);
+      expect((await request(app).put(`/accounts/${uid}`).send({ customItems: 'x' })).status).toBe(400);
+      const account = (await request(app).get(`/accounts/${uid}`)).body;
+      expect(account.steam64ids).toEqual([]);
+      expect(account.customItems).toEqual([]);
+    });
+
+    it('PUT /accounts/:uid returns 409 when the discordId belongs to another account', async () => {
+      await request(app).post('/accounts/discord').send({ discordId: '703' });
+      const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '704' })).body;
+      expect((await request(app).put(`/accounts/${uid}`).send({ discordId: '703' })).status).toBe(409);
+      expect((await request(app).put(`/accounts/${uid}`).send({ discordId: '704' })).status).toBe(200);
+    });
+
+    it('POST /accounts/:uid/customItems rejects a non-string item', async () => {
+      const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '705' })).body;
+      expect(
+        (
+          await request(app)
+            .post(`/accounts/${uid}/customItems`)
+            .send({ item: { a: 1 } })
+        ).status
+      ).toBe(400);
+    });
+  });
+
+  describe('hand-edited accounts without steam64ids or customItems', () => {
+    beforeEach(() => resetConfig([{ uid: 'bare', friendlyName: 'Bare', discordId: '801' }]));
+
+    it('can add a steam64id', async () => {
+      const res = await request(app).post('/accounts/bare/steam64ids').send({ steam64id: '76561198000000020' });
+      expect(res.status).toBe(200);
+      expect(res.body.steam64ids).toEqual(['76561198000000020']);
+    });
+
+    it('can add a custom item', async () => {
+      const res = await request(app).post('/accounts/bare/customItems').send({ item: 'AWP | Asiimov (Field-Tested)' });
+      expect(res.status).toBe(200);
+      expect(res.body.customItems).toEqual(['AWP | Asiimov (Field-Tested)']);
+    });
+
+    it('returns 404 when removing entries', async () => {
+      expect((await request(app).delete('/accounts/bare/steam64ids/76561198000000020')).status).toBe(404);
+      expect((await request(app).delete('/accounts/bare/customItems/x')).status).toBe(404);
+    });
+
+    it('returns an empty live inventory', async () => {
+      const res = await request(app).get('/accounts/bare/inventory');
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(0);
+    });
+  });
+
+  it('DELETE /accounts/:uid/customItems/:item handles names containing %', async () => {
+    const item = 'Sticker | 100% Pure (Foil)';
+    const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '901' })).body;
+    await request(app).post(`/accounts/${uid}/customItems`).send({ item });
+    const res = await request(app).delete(`/accounts/${uid}/customItems/${encodeURIComponent(item)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.customItems).toEqual([]);
+  });
 });
