@@ -13,7 +13,13 @@ const { readAccounts } = require('./accountStore');
 const inventoryFetches = require('./repositories/inventoryFetches');
 const priceSnapshots = require('./repositories/priceSnapshots');
 const { getRuleForPrice } = require('./rules');
-const { processInventoryForSteamId, processPriceForItem, isSteam64idTracked, isItemTracked } = require('./scanner');
+const {
+  processInventoryForSteamId,
+  processPriceForItem,
+  isSteam64idTracked,
+  isItemTracked,
+  scanState,
+} = require('./scanner');
 const { sleep } = require('./steam');
 
 // Unix seconds of the last successful inventory fetch, or 0 if there has been none
@@ -93,22 +99,26 @@ function requeuePrice(itemName) {
   enqueuePrice(itemName);
 }
 
-async function inventoryWorker() {
-  let wasActive = false;
-  while (true) {
-    if (inventoryQueue.size === 0) {
-      if (wasActive) {
-        logger.info('inventory - queue drained');
-        wasActive = false;
-      }
-      await sleep(WORKER_IDLE_SLEEP_MS);
-      continue;
-    }
-    wasActive = true;
+// Entries taken off a queue whose processing, including any retry pause, hasn't finished yet
+let inFlight = 0;
 
-    const [steam64id] = inventoryQueue.keys();
-    inventoryQueue.delete(steam64id);
+// Once a scan has been triggered (runScan), the first time both queues are empty with nothing in
+// flight marks it finished: lastScanMs is the time from the trigger to then
+function checkScanComplete() {
+  if (scanState.startedAt === null) return;
+  if (inventoryQueue.size > 0 || priceQueue.size > 0 || processingInventory.size > 0 || inFlight > 0) return;
+  scanState.lastScanMs = Date.now() - scanState.startedAt;
+  scanState.startedAt = null;
+  logger.info({ durationMs: scanState.lastScanMs }, 'scan - complete');
+}
 
+// Fetches the next steam64id's inventory. Returns false if the queue was empty.
+async function processNextInventory() {
+  if (inventoryQueue.size === 0) return false;
+  const [steam64id] = inventoryQueue.keys();
+  inventoryQueue.delete(steam64id);
+  inFlight++;
+  try {
     let result;
     processingInventory.add(steam64id);
     try {
@@ -128,27 +138,21 @@ async function inventoryWorker() {
       requeueInventory(steam64id, enqueueInventoryIfDue);
     } else {
       await sleep(INVENTORY_RATE_LIMIT_MS);
-      setTimeout(() => requeueInventory(steam64id), REENQUEUE_DELAY_MS);
+      setTimeout(() => requeueInventory(steam64id), REENQUEUE_DELAY_MS).unref();
     }
+  } finally {
+    inFlight--;
   }
+  return true;
 }
 
-async function priceWorker() {
-  let wasActive = false;
-  while (true) {
-    if (priceQueue.size === 0) {
-      if (wasActive) {
-        logger.info('price - queue drained');
-        wasActive = false;
-      }
-      await sleep(WORKER_IDLE_SLEEP_MS);
-      continue;
-    }
-    wasActive = true;
-
-    const [itemName] = priceQueue.keys();
-    priceQueue.delete(itemName);
-
+// Fetches the next item's price. Returns false if the queue was empty.
+async function processNextPrice() {
+  if (priceQueue.size === 0) return false;
+  const [itemName] = priceQueue.keys();
+  priceQueue.delete(itemName);
+  inFlight++;
+  try {
     let result;
     try {
       result = await processPriceForItem(itemName);
@@ -163,8 +167,27 @@ async function priceWorker() {
     } else {
       const delayMs = result?.scanMs ?? REENQUEUE_DELAY_MS;
       await sleep(PRICE_RATE_LIMIT_MS);
-      setTimeout(() => requeuePrice(itemName), delayMs);
+      setTimeout(() => requeuePrice(itemName), delayMs).unref();
     }
+  } finally {
+    inFlight--;
+  }
+  return true;
+}
+
+async function runWorker(processNext, area) {
+  let wasActive = false;
+  while (true) {
+    if (await processNext()) {
+      wasActive = true;
+      continue;
+    }
+    if (wasActive) {
+      logger.info(`${area} - queue drained`);
+      wasActive = false;
+    }
+    checkScanComplete();
+    await sleep(WORKER_IDLE_SLEEP_MS);
   }
 }
 
@@ -204,8 +227,8 @@ function startQueues() {
 
   logger.info({ inventoryQueue: inventoryQueue.size, priceQueue: priceQueue.size }, 'queue - workers started');
 
-  inventoryWorker().catch((err) => logger.fatal({ err }, 'inventory - worker crashed'));
-  priceWorker().catch((err) => logger.fatal({ err }, 'price - worker crashed'));
+  runWorker(processNextInventory, 'inventory').catch((err) => logger.fatal({ err }, 'inventory - worker crashed'));
+  runWorker(processNextPrice, 'price').catch((err) => logger.fatal({ err }, 'price - worker crashed'));
 }
 
 function getQueueState() {
@@ -223,6 +246,9 @@ function isPriceQueued(itemName) {
 }
 
 module.exports = {
+  processNextInventory,
+  processNextPrice,
+  checkScanComplete,
   requeueInventory,
   requeuePrice,
   enqueueInventory,

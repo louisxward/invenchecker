@@ -55,6 +55,7 @@ The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `data
 ## Key flows
 
 - **Queues** (`queue.js`): the inventory worker fetches one steam64id at a time and feeds its items to the price queue (`enqueuePriceIfDue`). The price worker fetches one item at a time, then `scanner.processPriceForItem` records a snapshot and maybe an alert. Each entry schedules its own next scan with `setTimeout`: inventories after `REENQUEUE_DELAY_MS`, prices after the matching rule's `scanHours`. When a timer fires, `requeueInventory`/`requeuePrice` drop the entry if no account tracks it any more. A restart re-seeds from accounts.json, respecting the last scan times.
+- **Scan duration**: `runScan` (`POST /alerts/scan`) only enqueues and sets `scanState.startedAt`. `checkScanComplete` in `queue.js` runs when a worker goes idle and sets `lastScanMs` once both queues are empty and nothing is in flight (`inFlight` covers an entry being processed or paused for a retry). The workers loop over `processNextInventory` / `processNextPrice`, which tests call directly.
 - **Results** from the scanner: `'rate_limited'` (HTTP 429) or `'retry'` (network error, timeout, or 5xx) pause the worker for `RATE_LIMIT_RETRY_MS` and retry. Any other Steam error marks the entry bad. A 5xx only counts towards the limit of 3 (`SERVER_ERROR_LIMIT`, in memory) when Steam answered another request of the same kind since that entry last failed, so an outage can't blacklist everything.
 - **Alerts**: an alert fires when the price is ≥ 7-day low × (1 + `alertPct`). After an alert, another one only fires at ≥ low × (1 + `realertPct`), or once the price has dipped back under the alert threshold since the last alert. Recipients are every uid whose custom items include the item or whose steam64ids hold it (not missing).
 - **API**: no auth, deliberately deferred (see TODO.md). It's only exposed on the Docker network (`expose`, not `ports`).
@@ -71,4 +72,3 @@ The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `data
 - `scanner.js` and `queue.js` require each other; scanner loads `./queue` lazily inside functions.
 - Express 5: `req.body` is undefined without a JSON body (the accounts router defaults it to `{}`), and `app.listen`'s callback receives listen errors.
 - Jest runs tests in a separate realm, so `instanceof TypeError` fails on errors thrown by Node's own `fetch`. `isNetworkError` checks `err.name` instead.
-- `scanState.lastScanMs` is never set; `/health` always reports it as null.

@@ -33,8 +33,11 @@ function recordServerError(type, value) {
   return count;
 }
 
+// lastScannedAt: Unix seconds of the last POST /alerts/scan. startedAt: ms of a scan the queues
+// haven't finished yet, or null. lastScanMs: how long the last finished scan took (see queue.js).
 const scanState = {
   lastScannedAt: null,
+  startedAt: null,
   lastScanMs: null,
 };
 
@@ -230,6 +233,7 @@ async function runScan(force = false) {
   }
 
   scanState.lastScannedAt = Math.floor(Date.now() / 1000);
+  scanState.startedAt = Date.now();
   logger.info({ force }, 'scan - items enqueued');
 }
 

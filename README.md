@@ -69,9 +69,9 @@ Changes take effect on restart.
 
 ### Health
 
-| Method | Path      | Description                                                     |
-| ------ | --------- | --------------------------------------------------------------- |
-| GET    | `/health` | Returns status, last manual scan time, and current queue depths |
+| Method | Path      | Description                                                                  |
+| ------ | --------- | ---------------------------------------------------------------------------- |
+| GET    | `/health` | Returns status, last manual scan time and duration, and current queue depths |
 
 ### Accounts
 
