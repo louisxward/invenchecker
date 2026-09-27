@@ -2,7 +2,7 @@
 
 const { SEVEN_DAYS_SECS } = require('./config');
 const logger = require('./logger');
-const { readAccounts } = require('./accountStore');
+const accounts = require('./repositories/accounts');
 const alertRecipients = require('./repositories/alertRecipients');
 const alerts = require('./repositories/alerts');
 const badEntries = require('./repositories/badEntries');
@@ -44,19 +44,19 @@ const scanState = {
 // Returns the set of uids that track a given item (via inventory or customItems)
 function getUidsForItem(itemId) {
   const uids = new Set();
-  const accounts = readAccounts();
+  const allAccounts = accounts.listAccounts();
 
   const holders = new Set(inventoryItems.listHolders(itemId));
 
   // Several accounts can list the same steam64id, and each of them tracks its items
-  for (const account of accounts) {
-    if ((account.steam64ids || []).some((id) => holders.has(id))) uids.add(account.uid);
+  for (const account of allAccounts) {
+    if (account.steam64ids.some((id) => holders.has(id))) uids.add(account.uid);
   }
 
   const itemName = itemNames.getItemName(itemId);
   if (itemName) {
-    for (const account of accounts) {
-      if ((account.customItems || []).includes(itemName)) {
+    for (const account of allAccounts) {
+      if (account.customItems.includes(itemName)) {
         uids.add(account.uid);
       }
     }
@@ -66,7 +66,7 @@ function getUidsForItem(itemId) {
 }
 
 function isSteam64idTracked(steam64id) {
-  return readAccounts().some((account) => (account.steam64ids || []).includes(steam64id));
+  return accounts.isSteam64idTracked(steam64id);
 }
 
 // An item is tracked while an account lists it as a custom item, or it is in (not missing from)
@@ -74,7 +74,7 @@ function isSteam64idTracked(steam64id) {
 function isItemTracked(itemName) {
   const itemId = itemNames.getItemId(itemName);
   if (itemId) return getUidsForItem(itemId).size > 0;
-  return readAccounts().some((account) => (account.customItems || []).includes(itemName));
+  return accounts.isCustomItemTracked(itemName);
 }
 
 // Fetch inventory for one steam64id, upsert to DB, enqueue found items for pricing
@@ -217,9 +217,9 @@ async function processPriceForItem(itemName) {
 // Enqueue all accounts' steam64ids and customItems for scanning (used by POST /alerts/scan)
 async function runScan(force = false) {
   const { enqueueInventory, enqueueInventoryIfDue, enqueuePrice, enqueuePriceIfDue } = require('./queue');
-  const accounts = readAccounts();
+  const allAccounts = accounts.listAccounts();
 
-  if (accounts.length === 0) {
+  if (allAccounts.length === 0) {
     logger.info('scan - no accounts configured, skipping');
     return;
   }
@@ -227,9 +227,9 @@ async function runScan(force = false) {
   const queueInv = force ? enqueueInventory : enqueueInventoryIfDue;
   const queuePrice = force ? enqueuePrice : enqueuePriceIfDue;
 
-  for (const account of accounts) {
-    for (const id of account.steam64ids || []) queueInv(id);
-    for (const item of account.customItems || []) queuePrice(item);
+  for (const account of allAccounts) {
+    for (const id of account.steam64ids) queueInv(id);
+    for (const item of account.customItems) queuePrice(item);
   }
 
   scanState.lastScannedAt = Math.floor(Date.now() / 1000);

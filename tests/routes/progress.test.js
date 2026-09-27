@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const request = require('supertest');
 const express = require('express');
+const { setAccounts } = require('../helpers/accounts');
 
 // Rules with scan intervals that differ from REENQUEUE_DELAY_MS (6h), set before src/ is loaded
 const RULES_PATH = path.join(os.tmpdir(), `invenchecker-test-progress-rules-${process.pid}.json`);
@@ -48,10 +49,7 @@ describe('GET /accounts/:uid/progress', () => {
 
   it("gives each custom item's next scan from its price rule, and inventories from the re-enqueue delay", async () => {
     const steam64id = '76561198000000030';
-    fs.writeFileSync(
-      process.env.CONFIG_PATH,
-      JSON.stringify([{ uid: 'p1', discordId: '1', steam64ids: [steam64id], customItems: ['Cheap', 'Pricey', 'New'] }])
-    );
+    setAccounts([{ uid: 'p1', discordId: '1', steam64ids: [steam64id], customItems: ['Cheap', 'Pricey', 'New'] }]);
     snapshot('Cheap', 1.5, 1000);
     snapshot('Pricey', 50, 2000);
     db.prepare(

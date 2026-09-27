@@ -1,8 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
-const { PORT } = require('./config');
+const { PORT, ACCOUNTS_PATH } = require('./config');
 const logger = require('./logger');
 
 // Anything that slips past a handler is logged rather than disappearing or crashing silently
@@ -14,19 +13,21 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-const { accountsPath } = require('./accountStore');
 const { createApp } = require('./app');
 const database = require('./database');
 const { startQueues } = require('./queue');
 
 // Migrations run here, before the queues or the API can use the database
-database.init();
+try {
+  database.init();
+} catch (err) {
+  logger.fatal({ err }, 'startup - database failed to open or migrate');
+  process.exit(1);
+}
 
-// Ensure accounts file exists
-fs.mkdirSync(path.dirname(accountsPath), { recursive: true });
-if (!fs.existsSync(accountsPath)) {
-  fs.writeFileSync(accountsPath, '[]', 'utf8');
-  logger.info({ accountsPath }, 'startup - created empty accounts.json');
+// Accounts live in the database; accounts.json was imported once, when the accounts tables were created
+if (fs.existsSync(ACCOUNTS_PATH)) {
+  logger.warn({ accountsPath: ACCOUNTS_PATH }, 'startup - accounts.json is no longer read and can be deleted');
 }
 
 // The queue workers run continuously, each entry re-scanning on its own interval

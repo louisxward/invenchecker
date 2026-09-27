@@ -6,18 +6,21 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 // Fresh instances of the database module and repositories, with config's DB_PATH set to dbPath
-function loadModules(dbPath) {
-  const saved = process.env.DB_PATH;
+// (and CONFIG_PATH, the accounts.json to import, to accountsPath when given)
+function loadModules(dbPath, accountsPath) {
+  const saved = { DB_PATH: process.env.DB_PATH, CONFIG_PATH: process.env.CONFIG_PATH };
   process.env.DB_PATH = dbPath;
+  if (accountsPath) process.env.CONFIG_PATH = accountsPath;
   const modules = {};
   try {
     jest.isolateModules(() => {
       modules.database = require('../src/database');
       modules.itemNames = require('../src/repositories/itemNames');
       modules.badEntries = require('../src/repositories/badEntries');
+      modules.accounts = require('../src/repositories/accounts');
     });
   } finally {
-    process.env.DB_PATH = saved;
+    Object.assign(process.env, saved);
   }
   return modules;
 }
@@ -101,6 +104,9 @@ describe('database migrations', () => {
   it('creates the full schema on a fresh database', () => {
     db = openDb(dbPath);
     expect(tables(db)).toEqual([
+      'account_custom_items',
+      'account_steam64ids',
+      'accounts',
       'alert_recipients',
       'alerts',
       'bad_entries',
@@ -109,6 +115,7 @@ describe('database migrations', () => {
       'item_names',
       'price_snapshots',
     ]);
+    expect(db.pragma('user_version', { simple: true })).toBe(2);
     expect(columns(db, 'price_snapshots')).toContain('item_id');
     expect(columns(db, 'alerts')).not.toContain('resolved');
     expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
@@ -166,6 +173,97 @@ describe('database migrations', () => {
       expect(columns(check, 'price_snapshots')).toContain('market_hash_name');
       expect(check.prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(3);
       expect(tables(check)).not.toContain('item_names');
+    } finally {
+      check.close();
+    }
+  });
+});
+
+describe('accounts.json import (migration 2)', () => {
+  let dir;
+  let dbPath;
+  let accountsPath;
+  let modules;
+
+  const writeAccountsFile = (content) =>
+    fs.writeFileSync(accountsPath, typeof content === 'string' ? content : JSON.stringify(content));
+
+  function open() {
+    modules = loadModules(dbPath, accountsPath);
+    modules.database.init();
+    return modules;
+  }
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invenchecker-import-'));
+    dbPath = path.join(dir, 'test.db');
+    accountsPath = path.join(dir, 'accounts.json');
+  });
+
+  afterEach(() => {
+    modules?.database.close();
+    modules = undefined;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('imports every account, keeping order, list order and repeats', () => {
+    writeAccountsFile([
+      { uid: 'b', friendlyName: 'Bee', discordId: '2', steam64ids: ['76561198000000002', '76561198000000001'] },
+      { uid: 'a', discordId: '1', customItems: ['Z', 'A', 'Z'] },
+      { uid: 'bare' },
+    ]);
+    const { accounts } = open();
+    expect(accounts.listAccounts()).toEqual([
+      {
+        uid: 'b',
+        friendlyName: 'Bee',
+        discordId: '2',
+        steam64ids: ['76561198000000002', '76561198000000001'],
+        customItems: [],
+      },
+      { uid: 'a', friendlyName: null, discordId: '1', steam64ids: [], customItems: ['Z', 'A', 'Z'] },
+      { uid: 'bare', friendlyName: null, discordId: null, steam64ids: [], customItems: [] },
+    ]);
+  });
+
+  it('imports into a database created before accounts moved (user_version 0)', () => {
+    const raw = createLegacyDb(dbPath);
+    raw.close();
+    writeAccountsFile([{ uid: 'a', steam64ids: ['76561198000000001'] }]);
+    const { accounts, database } = open();
+    expect(accounts.getAccount('a').steam64ids).toEqual(['76561198000000001']);
+    expect(database.getDb().prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(3);
+  });
+
+  it('only imports once', () => {
+    writeAccountsFile([{ uid: 'a' }]);
+    open().database.close();
+    writeAccountsFile([{ uid: 'a' }, { uid: 'b' }]);
+    expect(
+      open()
+        .accounts.listAccounts()
+        .map((a) => a.uid)
+    ).toEqual(['a']);
+  });
+
+  it('starts with no accounts when there is no accounts.json', () => {
+    expect(open().accounts.listAccounts()).toEqual([]);
+  });
+
+  it.each([
+    ['invalid JSON', '[{', /Failed to import/],
+    ['not an array', '{}', /not a JSON array/],
+    ['an entry without a uid', [{ friendlyName: 'x' }], /entry 0 has no uid/],
+    ['a repeated uid', [{ uid: 'a' }, { uid: 'a' }], /entry 1 repeats uid a/],
+    ['a non-string list entry', [{ uid: 'a', steam64ids: [12345] }], /steam64ids must be an array of strings/],
+  ])('refuses to start on %s, leaving the database untouched', (_label, content, message) => {
+    writeAccountsFile(content);
+    const { database } = loadModules(dbPath, accountsPath);
+    expect(() => database.init()).toThrow(message);
+    const check = new Database(dbPath, { readonly: true });
+    try {
+      expect(check.pragma('user_version', { simple: true })).toBe(0);
+      expect(tables(check)).toEqual([]);
     } finally {
       check.close();
     }

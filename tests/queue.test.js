@@ -1,6 +1,6 @@
 'use strict';
 
-const fs = require('fs');
+const { setAccounts } = require('./helpers/accounts');
 
 jest.mock('../src/steam', () => ({
   fetchInventory: jest.fn(),
@@ -17,10 +17,6 @@ describe('queue re-enqueueing', () => {
 
   const STEAM_ID = '76561198000000040';
   const OTHER_ID = '76561198000000041';
-
-  function setAccounts(accounts) {
-    fs.writeFileSync(process.env.CONFIG_PATH, JSON.stringify(accounts), 'utf8');
-  }
 
   function holdItem(steam64id, name, missing = 0) {
     db.prepare(
@@ -114,10 +110,7 @@ describe('scan duration (lastScanMs)', () => {
     jest.spyOn(Date, 'now').mockImplementation(() => now);
     steam.fetchInventory.mockResolvedValue([{ market_hash_name: 'Scan Inv Item' }]);
     steam.fetchPrice.mockResolvedValue({ lowest_price: 1, median_price: 1, volume: 1 });
-    fs.writeFileSync(
-      process.env.CONFIG_PATH,
-      JSON.stringify([{ uid: 's', steam64ids: [STEAM_ID], customItems: ['Scan Custom'] }])
-    );
+    setAccounts([{ uid: 's', steam64ids: [STEAM_ID], customItems: ['Scan Custom'] }]);
     await drain(); // entries left over from other tests
     queue.checkScanComplete();
     scanner.scanState.lastScanMs = null;

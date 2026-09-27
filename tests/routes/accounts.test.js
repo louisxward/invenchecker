@@ -2,13 +2,8 @@
 
 const request = require('supertest');
 const express = require('express');
-const fs = require('fs');
 
-const CONFIG_PATH = process.env.CONFIG_PATH;
-
-function resetConfig(data = []) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(data), 'utf8');
-}
+const { setAccounts } = require('../helpers/accounts');
 
 describe('Accounts routes', () => {
   let app;
@@ -21,7 +16,7 @@ describe('Accounts routes', () => {
   });
 
   beforeEach(() => {
-    resetConfig();
+    setAccounts([]);
   });
 
   describe('GET /accounts', () => {
@@ -32,7 +27,7 @@ describe('Accounts routes', () => {
     });
 
     it('returns all accounts', async () => {
-      resetConfig([{ uid: 'abc', friendlyName: 'Test', discordId: '1', steam64ids: [], customItems: [] }]);
+      setAccounts([{ uid: 'abc', friendlyName: 'Test', discordId: '1', steam64ids: [], customItems: [] }]);
       const res = await request(app).get('/accounts');
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
@@ -333,6 +328,33 @@ describe('Accounts routes', () => {
       expect((await request(app).put(`/accounts/${uid}`).send({ discordId: '704' })).status).toBe(200);
     });
 
+    it('rejects a friendlyName or discordId that is not a string', async () => {
+      const valid = { friendlyName: 'x', discordId: '710', steam64ids: ['76561198000000010'] };
+      expect(
+        (
+          await request(app)
+            .post('/accounts')
+            .send({ ...valid, friendlyName: 5 })
+        ).status
+      ).toBe(400);
+      expect(
+        (
+          await request(app)
+            .post('/accounts')
+            .send({ ...valid, discordId: true })
+        ).status
+      ).toBe(400);
+      expect((await request(app).post('/accounts/discord').send({ discordId: 711 })).status).toBe(400);
+      expect((await request(app).post('/accounts/discord').send({ discordId: '712', friendlyName: {} })).status).toBe(
+        400
+      );
+      const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '713' })).body;
+      expect((await request(app).put(`/accounts/${uid}`).send({ friendlyName: 1 })).status).toBe(400);
+      expect((await request(app).put(`/accounts/${uid}`).send({ discordId: '' })).status).toBe(400);
+      expect((await request(app).put(`/accounts/${uid}`).send({ friendlyName: null })).status).toBe(200);
+      expect((await request(app).get('/accounts')).body.map((a) => a.discordId)).toEqual(['713']);
+    });
+
     it('POST /accounts/:uid/customItems rejects a non-string item', async () => {
       const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '705' })).body;
       expect(
@@ -345,8 +367,8 @@ describe('Accounts routes', () => {
     });
   });
 
-  describe('hand-edited accounts without steam64ids or customItems', () => {
-    beforeEach(() => resetConfig([{ uid: 'bare', friendlyName: 'Bare', discordId: '801' }]));
+  describe('accounts without steam64ids or customItems', () => {
+    beforeEach(() => setAccounts([{ uid: 'bare', friendlyName: 'Bare', discordId: '801' }]));
 
     it('can add a steam64id', async () => {
       const res = await request(app).post('/accounts/bare/steam64ids').send({ steam64id: '76561198000000020' });
@@ -379,5 +401,29 @@ describe('Accounts routes', () => {
     const res = await request(app).delete(`/accounts/${uid}/customItems/${encodeURIComponent(item)}`);
     expect(res.status).toBe(200);
     expect(res.body.customItems).toEqual([]);
+  });
+
+  it('DELETE /accounts/:uid stops its steam64ids and custom items being tracked', async () => {
+    const accounts = require('../../src/repositories/accounts');
+    const { uid } = (
+      await request(app)
+        .post('/accounts')
+        .send({ friendlyName: 'T', discordId: '920', steam64ids: ['76561198000000021'], customItems: ['Gone Item'] })
+    ).body;
+    expect(accounts.isSteam64idTracked('76561198000000021')).toBe(true);
+    await request(app).delete(`/accounts/${uid}`);
+    expect(accounts.isSteam64idTracked('76561198000000021')).toBe(false);
+    expect(accounts.isCustomItemTracked('Gone Item')).toBe(false);
+  });
+
+  it('PUT keeps list order and repeats, and DELETE removes the first repeat only', async () => {
+    const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '921' })).body;
+    await request(app)
+      .put(`/accounts/${uid}`)
+      .send({ customItems: ['B', 'A', 'B'] });
+    await request(app).post(`/accounts/${uid}/customItems`).send({ item: 'C' });
+    expect((await request(app).get(`/accounts/${uid}`)).body.customItems).toEqual(['B', 'A', 'B', 'C']);
+    const res = await request(app).delete(`/accounts/${uid}/customItems/B`);
+    expect(res.body.customItems).toEqual(['A', 'B', 'C']);
   });
 });

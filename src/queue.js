@@ -9,7 +9,7 @@ const {
   RATE_LIMIT_RETRY_MS,
 } = require('./config');
 const logger = require('./logger');
-const { readAccounts } = require('./accountStore');
+const accounts = require('./repositories/accounts');
 const inventoryFetches = require('./repositories/inventoryFetches');
 const priceSnapshots = require('./repositories/priceSnapshots');
 const { getRuleForPrice } = require('./rules');
@@ -196,11 +196,10 @@ function startQueues() {
   workersStarted = true;
 
   // Seed queues, respecting last scan time to avoid redundant scans on restart
-  const accounts = readAccounts();
   const nowSec = Math.floor(Date.now() / 1000);
 
-  for (const account of accounts) {
-    for (const steam64id of account.steam64ids || []) {
+  for (const account of accounts.listAccounts()) {
+    for (const steam64id of account.steam64ids) {
       const elapsedMs = (nowSec - lastFetchedAt(steam64id)) * 1000;
       if (elapsedMs >= REENQUEUE_DELAY_MS) {
         enqueueInventory(steam64id);
@@ -211,7 +210,7 @@ function startQueues() {
       }
     }
 
-    for (const item of account.customItems || []) {
+    for (const item of account.customItems) {
       const last = priceSnapshots.getLatestSnapshot(item);
       const scanMs = last?.lowest_price != null ? getRuleForPrice(last.lowest_price).scanMs : REENQUEUE_DELAY_MS;
       const elapsedMs = (nowSec - (last?.captured_at ?? 0)) * 1000;

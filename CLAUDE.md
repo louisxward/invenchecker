@@ -20,13 +20,12 @@ Every env var has a default (see `.env.example` and `src/config.js`). Docker loa
 
 ```
 src/
-  index.js         startup (process handlers, db, accounts.json, queues, API), graceful shutdown
+  index.js         startup (process handlers, database, queues, API), graceful shutdown
   app.js           Express app (createApp) with the global error handler
   config.js        env vars and file paths
   logger.js        pino, LOG_LEVEL; pino-pretty when NODE_ENV=development
   database/        index.js (init, getDb, close), migrations.js (migrate, run in one transaction by init)
   repositories/    one file per table, all SQL lives here
-  accountStore.js  readAccounts/writeAccounts for accounts.json
   rules.js         price-tier rules from rules.json (cached; changes need a restart)
   steam.js         Steam inventory + priceoverview clients (10s timeout), isNetworkError, isServerError
   scanner.js       processes one inventory or one price: snapshots, alerts, bad entries, tracking checks
@@ -36,25 +35,26 @@ src/
 
 The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `database/`. Only repositories and migrations run SQL. `index.js` calls `database.init()` before starting the queues and the API; anything that calls `getDb()` before that throws. Repositories are synchronous (better-sqlite3), take plain values, and log `'repository - fnName'` at debug.
 
-| Repository         | Table                                                                    |
-| ------------------ | ------------------------------------------------------------------------ |
-| `itemNames`        | `item_names`; `getOrCreateItemId` caches ids for the current connection  |
-| `priceSnapshots`   | `price_snapshots`: create, 7-day low, spike-reset check, latest, history |
-| `alerts`           | `alerts`: create, last for an item, list                                 |
-| `alertRecipients`  | `alert_recipients`: add, unresolved per uid, resolve one / all           |
-| `inventoryItems`   | `inventory_items`: upsert seen, mark missing, holders of an item, list   |
-| `inventoryFetches` | `inventory_fetches`: record, last fetch                                  |
-| `badEntries`       | `bad_entries`: isBad, markBad, getBadReason                              |
+| Repository         | Table                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `itemNames`        | `item_names`; `getOrCreateItemId` caches ids for the current connection                                                                |
+| `priceSnapshots`   | `price_snapshots`: create, 7-day low, spike-reset check, latest, history                                                               |
+| `alerts`           | `alerts`: create, last for an item, list                                                                                               |
+| `alertRecipients`  | `alert_recipients`: add, unresolved per uid, resolve one / all                                                                         |
+| `inventoryItems`   | `inventory_items`: upsert seen, mark missing, holders of an item, list                                                                 |
+| `inventoryFetches` | `inventory_fetches`: record, last fetch                                                                                                |
+| `badEntries`       | `bad_entries`: isBad, markBad, getBadReason                                                                                            |
+| `accounts`         | `accounts` + `account_steam64ids` + `account_custom_items`: list, get, create, update, delete, add/remove list entries, tracked checks |
 
 ## Persistence
 
-- **`data/accounts.json`**: the accounts (`uid`, `friendlyName`, `discordId`, `steam64ids[]`, `customItems[]`). Written by the API and **also hand-edited by design**, so it stays a JSON file and is re-read on every use. `steam64ids`/`customItems` may be missing in hand-edited entries; `getAccount` in `routes/accounts.js` defaults them. Writes go through a temp file + rename.
 - **`data/rules.json`**: hand-edited price tiers, sorted by `minPrice` descending. Missing or invalid falls back to one built-in rule (6h, +15%, +20%).
-- **`data/invenchecker.db`** (SQLite, WAL): `item_names` (name ↔ id), `price_snapshots`, `alerts`, `alert_recipients` (per-uid resolved state), `inventory_items` (per steam64id, `missing` when it leaves the inventory), `inventory_fetches`, `bad_entries` (steam64ids/items Steam rejected; permanent, and the API refuses to re-add them). There's no `user_version`; migrations detect the schema by its columns.
+- **`data/invenchecker.db`** (SQLite, WAL): `accounts` with `account_steam64ids` and `account_custom_items` (ordered by `position`, repeats allowed, since the API returns lists as stored), `item_names` (name ↔ id), `price_snapshots`, `alerts`, `alert_recipients` (per-uid resolved state), `inventory_items` (per steam64id, `missing` when it leaves the inventory), `inventory_fetches`, `bad_entries` (steam64ids/items Steam rejected; permanent, and the API refuses to re-add them). Migrations (`database/migrations.js`) are numbered by `user_version`: 1 is the original schema (its steps still detect older layouts by their columns), 2 adds the account tables and imports `data/accounts.json` (`CONFIG_PATH`) once, refusing to start on a malformed file. Add new migrations to the end of `MIGRATIONS`.
+- **`data/accounts.json`**: legacy only. Imported by migration 2 and then ignored; startup logs a warning while it exists.
 
 ## Key flows
 
-- **Queues** (`queue.js`): the inventory worker fetches one steam64id at a time and feeds its items to the price queue (`enqueuePriceIfDue`). The price worker fetches one item at a time, then `scanner.processPriceForItem` records a snapshot and maybe an alert. Each entry schedules its own next scan with `setTimeout`: inventories after `REENQUEUE_DELAY_MS`, prices after the matching rule's `scanHours`. When a timer fires, `requeueInventory`/`requeuePrice` drop the entry if no account tracks it any more. A restart re-seeds from accounts.json, respecting the last scan times.
+- **Queues** (`queue.js`): the inventory worker fetches one steam64id at a time and feeds its items to the price queue (`enqueuePriceIfDue`). The price worker fetches one item at a time, then `scanner.processPriceForItem` records a snapshot and maybe an alert. Each entry schedules its own next scan with `setTimeout`: inventories after `REENQUEUE_DELAY_MS`, prices after the matching rule's `scanHours`. When a timer fires, `requeueInventory`/`requeuePrice` drop the entry if no account tracks it any more. A restart re-seeds from the accounts, respecting the last scan times.
 - **Scan duration**: `runScan` (`POST /alerts/scan`) only enqueues and sets `scanState.startedAt`. `checkScanComplete` in `queue.js` runs when a worker goes idle and sets `lastScanMs` once both queues are empty and nothing is in flight (`inFlight` covers an entry being processed or paused for a retry). The workers loop over `processNextInventory` / `processNextPrice`, which tests call directly.
 - **Results** from the scanner: `'rate_limited'` (HTTP 429) or `'retry'` (network error, timeout, or 5xx) pause the worker for `RATE_LIMIT_RETRY_MS` and retry. Any other Steam error marks the entry bad. A 5xx only counts towards the limit of 3 (`SERVER_ERROR_LIMIT`, in memory) when Steam answered another request of the same kind since that entry last failed, so an outage can't blacklist everything.
 - **Alerts**: an alert fires when the price is ≥ 7-day low × (1 + `alertPct`). After an alert, another one only fires at ≥ low × (1 + `realertPct`), or once the price has dipped back under the alert threshold since the last alert. Recipients are every uid whose custom items include the item or whose steam64ids hold it (not missing).
@@ -65,7 +65,7 @@ The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `data
 - Logging is structured, one line per event: `logger.info({ steam64id }, 'inventory - fetched')`. The area is short and lowercase (`startup`, `shutdown`, `process`, `api`, `queue`, `inventory`, `price`, `alert`, `scan`, `accounts`, `rules`). Errors pass `{ err }`.
 - Import order: `node:` built-ins, packages, `config`/`logger`, then internal modules.
 - Catch variables are `err`; `===` except `== null`.
-- Tests: `tests/setup.js` points each Jest worker at an in-memory DB, a temp accounts.json and a missing rules.json (so the built-in rule applies). Test files that touch the database call `require('../src/database').init()` in `beforeAll`, and may use `getDb()` for fixtures. `tests/db.test.js` runs the migrations against real temp files (`loadModules` sets `DB_PATH` before config is loaded). Route tests mount a single router on a bare Express app; `health.test.js` uses `createApp()`.
+- Tests: `tests/setup.js` points each Jest worker at an in-memory DB, a missing accounts.json (nothing to import) and a missing rules.json (so the built-in rule applies). `tests/helpers/accounts.js` `setAccounts()` replaces the accounts. Test files that touch the database call `require('../src/database').init()` in `beforeAll`, and may use `getDb()` for fixtures. `tests/db.test.js` runs the migrations against real temp files (`loadModules` sets `DB_PATH` before config is loaded). Route tests mount a single router on a bare Express app; `health.test.js` uses `createApp()`.
 
 ## Gotchas
 

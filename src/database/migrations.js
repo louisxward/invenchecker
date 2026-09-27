@@ -1,9 +1,10 @@
 'use strict';
 
-// The schema has no user_version: each step detects what it needs from the tables and columns
-// that exist, so it is safe to run on every start. init() runs it in one transaction, so a failure
-// part-way leaves the database as it was instead of half-migrated (which the checks would then skip).
-function migrate(db) {
+const fs = require('node:fs');
+
+// Migration 1: the schema as it was before user_version was used. Each step detects what it needs
+// from the tables and columns that exist, so it also brings any older database up to date.
+function baseSchema(db) {
   // item_names: one row per unique market_hash_name string
   db.exec(`
     CREATE TABLE IF NOT EXISTS item_names (
@@ -158,4 +159,82 @@ function migrate(db) {
   `);
 }
 
-module.exports = { migrate };
+// Throws unless every entry is an account the API could have written
+function validateImportedAccounts(accounts, accountsPath) {
+  if (!Array.isArray(accounts)) throw new Error(`${accountsPath} is not a JSON array`);
+  const isStringOrMissing = (v) => v === undefined || v === null || typeof v === 'string';
+  const isStringList = (v) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
+  const uids = new Set();
+  accounts.forEach((a, i) => {
+    const where = `${accountsPath} entry ${i}`;
+    if (typeof a !== 'object' || a === null) throw new Error(`${where} is not an object`);
+    if (typeof a.uid !== 'string' || !a.uid) throw new Error(`${where} has no uid`);
+    if (uids.has(a.uid)) throw new Error(`${where} repeats uid ${a.uid}`);
+    uids.add(a.uid);
+    if (!isStringOrMissing(a.friendlyName)) throw new Error(`${where}: friendlyName must be a string`);
+    if (!isStringOrMissing(a.discordId)) throw new Error(`${where}: discordId must be a string`);
+    if (!isStringList(a.steam64ids)) throw new Error(`${where}: steam64ids must be an array of strings`);
+    if (!isStringList(a.customItems)) throw new Error(`${where}: customItems must be an array of strings`);
+  });
+}
+
+// Migration 2: accounts move from accounts.json into the database. List order is kept (the API
+// returns lists as stored) and so are repeated entries, which the file allowed.
+function accountTables(db, { accountsPath }) {
+  db.exec(`
+    CREATE TABLE accounts (
+      uid           TEXT PRIMARY KEY,
+      friendly_name TEXT,
+      discord_id    TEXT
+    );
+    CREATE INDEX idx_accounts_discord ON accounts(discord_id);
+
+    CREATE TABLE account_steam64ids (
+      uid       TEXT    NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+      position  INTEGER NOT NULL,
+      steam64id TEXT    NOT NULL,
+      PRIMARY KEY (uid, position)
+    );
+    CREATE INDEX idx_account_steam64ids ON account_steam64ids(steam64id);
+
+    CREATE TABLE account_custom_items (
+      uid      TEXT    NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      item     TEXT    NOT NULL,
+      PRIMARY KEY (uid, position)
+    );
+    CREATE INDEX idx_account_custom_items ON account_custom_items(item);
+  `);
+
+  let accounts;
+  try {
+    accounts = JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw new Error(`Failed to import ${accountsPath}: ${err.message}`, { cause: err });
+  }
+  validateImportedAccounts(accounts, accountsPath);
+
+  const insertAccount = db.prepare('INSERT INTO accounts (uid, friendly_name, discord_id) VALUES (?, ?, ?)');
+  const insertId = db.prepare('INSERT INTO account_steam64ids (uid, position, steam64id) VALUES (?, ?, ?)');
+  const insertItem = db.prepare('INSERT INTO account_custom_items (uid, position, item) VALUES (?, ?, ?)');
+  for (const a of accounts) {
+    insertAccount.run(a.uid, a.friendlyName ?? null, a.discordId ?? null);
+    (a.steam64ids ?? []).forEach((id, i) => insertId.run(a.uid, i, id));
+    (a.customItems ?? []).forEach((item, i) => insertItem.run(a.uid, i, item));
+  }
+}
+
+const MIGRATIONS = [baseSchema, accountTables];
+
+// Applies the migrations after the database's user_version. init() runs this in one transaction,
+// so a failure part-way leaves the database as it was.
+function migrate(db, options) {
+  const version = db.pragma('user_version', { simple: true });
+  for (let i = version; i < MIGRATIONS.length; i++) {
+    MIGRATIONS[i](db, options);
+    db.pragma(`user_version = ${i + 1}`);
+  }
+}
+
+module.exports = { migrate, MIGRATIONS };

@@ -1,6 +1,6 @@
 'use strict';
 
-const fs = require('fs');
+const { setAccounts } = require('./helpers/accounts');
 
 jest.mock('../src/steam', () => ({
   fetchInventory: jest.fn(),
@@ -34,11 +34,6 @@ describe('Scanner', () => {
   const UID = 'testuid1';
   const STEAM_ID = '76561198000000000';
   const ITEM_NAME = 'AK-47 | Redline (Field-Tested)';
-  const CONFIG_PATH = process.env.CONFIG_PATH;
-
-  function setAccounts(accounts) {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(accounts), 'utf8');
-  }
 
   function insertSnapshot(itemName, price, daysAgo = 0) {
     const itemId = itemNames.getOrCreateItemId(itemName);

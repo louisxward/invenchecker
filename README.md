@@ -23,33 +23,18 @@ The app listens on port **33001** inside the `invenchecker` Docker network; it i
 
 All state lives in the data directory: `/opt/data/invenchecker` on the Docker host (mounted at `/app/data`), or `data/` next to `src/` when running locally.
 
-| File              | Contents                                                                  |
-| ----------------- | ------------------------------------------------------------------------- |
-| `accounts.json`   | The tracked accounts. Written by the API, and safe to edit by hand        |
-| `rules.json`      | Optional price-tier rules, edited by hand                                 |
-| `invenchecker.db` | SQLite: item names, price snapshots, alerts, inventory state, bad entries |
+| File              | Contents                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `invenchecker.db` | SQLite: accounts, item names, price snapshots, alerts, inventory state, bad entries |
+| `rules.json`      | Optional price-tier rules, edited by hand                                           |
 
 ## Configuration
 
-### accounts.json
+### Accounts
 
-Accounts are stored in `accounts.json` in the data directory. It's created empty on first start. You can manage it through the API or edit it directly. The file is re-read on every use, but hand-added steam64ids and custom items are only scheduled for scanning on the next restart or `POST /alerts/scan`.
+Accounts are stored in the database and managed through the Accounts endpoints below. Each has a `uid`, `friendlyName`, `discordId`, `steam64ids[]` and `customItems[]`.
 
-Example:
-
-```json
-[
-  {
-    "uid": "a1b2c3d4e5f6a7b8",
-    "friendlyName": "My Account",
-    "discordId": "123456789012345678",
-    "steam64ids": ["76561198000000000"],
-    "customItems": ["AK-47 | Redline (Field-Tested)", "AWP | Dragon Lore (Factory New)"]
-  }
-]
-```
-
-Only `uid` is required. The other fields can be left out of hand-edited entries.
+**Upgrading from `accounts.json`:** accounts used to live in `accounts.json` in the data directory. The first start of this version imports that file into the database, once, and it isn't read again (a warning is logged at startup while it still exists, so delete it once you've checked the accounts with `GET /accounts`). If the file is malformed (not valid JSON, an entry without a `uid`, a repeated `uid`, or fields of the wrong type), startup stops with an error naming the entry and the database is left unchanged; fix the file and start again.
 
 > **Note:** `customItems` values must match the Steam `market_hash_name` exactly (case-sensitive).
 
@@ -172,7 +157,7 @@ Alerts are exposed via `GET /alerts` for polling.
 | ------------------------- | ---------------------------- | -------- | ----------------------------------------------------------------------------- |
 | `PORT`                    | `33001`                      | No       | Port the server listens on                                                    |
 | `DB_PATH`                 | `<DATA_DIR>/invenchecker.db` | No       | Path to the SQLite database file                                              |
-| `CONFIG_PATH`             | `<DATA_DIR>/accounts.json`   | No       | Path to the accounts config file                                              |
+| `CONFIG_PATH`             | `<DATA_DIR>/accounts.json`   | No       | Legacy accounts file, imported once on upgrade (see Accounts)                 |
 | `LOG_LEVEL`               | `info`                       | No       | Logging level                                                                 |
 | `PRICE_RATE_LIMIT_MS`     | `1100`                       | No       | Minimum milliseconds between price API requests                               |
 | `INVENTORY_RATE_LIMIT_MS` | `3000`                       | No       | Minimum milliseconds between inventory API requests                           |
@@ -195,7 +180,7 @@ Requires Node 24.
 
 ```bash
 npm install
-npm run dev      # pretty logs, restarts on save; creates data/accounts.json if missing
+npm run dev      # pretty logs, restarts on save; creates data/invenchecker.db if missing
 npm test
 npm run lint
 ```
