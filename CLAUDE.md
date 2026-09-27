@@ -57,7 +57,7 @@ The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `data
 - **Queues** (`queue.js`): the inventory worker fetches one steam64id at a time and feeds its items to the price queue (`enqueuePriceIfDue`). The price worker fetches one item at a time, then `scanner.processPriceForItem` records a snapshot and maybe an alert. Each entry schedules its own next scan with `setTimeout`: inventories after `REENQUEUE_DELAY_MS`, prices after the matching rule's `scanHours`. When a timer fires, `requeueInventory`/`requeuePrice` drop the entry if no account tracks it any more. A restart re-seeds from accounts.json, respecting the last scan times.
 - **Results** from the scanner: `'rate_limited'` (HTTP 429) or `'retry'` (network error, timeout, or 5xx) pause the worker for `RATE_LIMIT_RETRY_MS` and retry. Any other Steam error marks the entry bad. A 5xx only counts towards the limit of 3 (`SERVER_ERROR_LIMIT`, in memory) when Steam answered another request of the same kind since that entry last failed, so an outage can't blacklist everything.
 - **Alerts**: an alert fires when the price is ≥ 7-day low × (1 + `alertPct`). After an alert, another one only fires at ≥ low × (1 + `realertPct`), or once the price has dipped back under the alert threshold since the last alert. Recipients are every uid whose custom items include the item or whose steam64ids hold it (not missing).
-- **API**: no auth. It's only exposed on the Docker network (`expose`, not `ports`).
+- **API**: no auth, deliberately deferred (see TODO.md). It's only exposed on the Docker network (`expose`, not `ports`).
 
 ## Conventions
 
