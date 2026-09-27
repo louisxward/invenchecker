@@ -1,8 +1,8 @@
 'use strict';
 
-const fs = require('fs');
+const fs = require('node:fs');
+const { RULES_PATH } = require('./config');
 const logger = require('./logger');
-const { RULES_PATH } = require('./appConfig');
 
 const DEFAULT_RULES = [{ minPrice: 0, scanHours: 6, alertPct: 15, realertPct: 20 }];
 
@@ -16,21 +16,21 @@ function loadRules() {
     raw = JSON.parse(fs.readFileSync(RULES_PATH, 'utf8'));
   } catch (err) {
     if (err.code === 'ENOENT') {
-      logger.warn({ RULES_PATH }, 'rules.json not found, using hardcoded defaults');
+      logger.warn({ RULES_PATH }, 'rules - rules.json not found, using hardcoded defaults');
     } else {
-      logger.error({ err, RULES_PATH }, 'Failed to parse rules.json, using hardcoded defaults');
+      logger.error({ err, RULES_PATH }, 'rules - failed to parse rules.json, using hardcoded defaults');
     }
     raw = DEFAULT_RULES;
   }
 
   if (!Array.isArray(raw) || raw.length === 0) {
-    logger.error({ RULES_PATH }, 'rules.json is empty or not an array, using hardcoded defaults');
+    logger.error({ RULES_PATH }, 'rules - rules.json is empty or not an array, using hardcoded defaults');
     raw = DEFAULT_RULES;
   }
 
   // Sort descending so highest price tier is tested first
   cachedRules = [...raw].sort((a, b) => b.minPrice - a.minPrice);
-  logger.info({ ruleCount: cachedRules.length }, 'Rules loaded');
+  logger.info({ ruleCount: cachedRules.length }, 'rules - loaded');
   return cachedRules;
 }
 

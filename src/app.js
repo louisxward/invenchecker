@@ -10,7 +10,7 @@ function createApp() {
 
   // Global error handler
   app.use((err, req, res, _next) => {
-    logger.error({ err, path: req.path }, 'Unhandled request error');
+    logger.error({ err, path: req.path }, 'api - unhandled request error');
     res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
   });
   return app;

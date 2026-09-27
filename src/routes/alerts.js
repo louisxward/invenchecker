@@ -2,8 +2,8 @@
 
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
 const logger = require('../logger');
+const db = require('../db');
 const { runScan } = require('../scanner');
 
 const ALERT_SELECT = `
@@ -64,7 +64,7 @@ router.post('/scan', async (req, res) => {
     await runScan(force);
     res.json({ message: 'Scan enqueued', force, queuedAt: Math.floor(Date.now() / 1000) });
   } catch (err) {
-    logger.error({ err }, 'Manual scan enqueue failed');
+    logger.error({ err }, 'scan - manual enqueue failed');
     res.status(500).json({ error: err.message });
   }
 });

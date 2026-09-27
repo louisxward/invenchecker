@@ -1,11 +1,11 @@
 'use strict';
 
-const db = require('./db');
+const { SEVEN_DAYS_SECS } = require('./config');
 const logger = require('./logger');
-const { readConfig } = require('./config');
-const { fetchInventory, fetchPrice, isNetworkError } = require('./steam');
-const { SEVEN_DAYS_SECS } = require('./appConfig');
+const { readAccounts } = require('./accountStore');
+const db = require('./db');
 const { getRuleForPrice } = require('./rules');
+const { fetchInventory, fetchPrice, isNetworkError } = require('./steam');
 
 const upsertInvItem = db.prepare(`
   INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen)
@@ -27,7 +27,7 @@ const scanState = {
 // Returns the set of uids that track a given item (via inventory or customItems)
 function getUidsForItem(itemId) {
   const uids = new Set();
-  const accounts = readConfig();
+  const accounts = readAccounts();
 
   const holders = new Set(
     db
@@ -54,7 +54,7 @@ function getUidsForItem(itemId) {
 }
 
 function isSteam64idTracked(steam64id) {
-  return readConfig().some((account) => (account.steam64ids || []).includes(steam64id));
+  return readAccounts().some((account) => (account.steam64ids || []).includes(steam64id));
 }
 
 // An item is tracked while an account lists it as a custom item, or it is in (not missing from)
@@ -62,38 +62,38 @@ function isSteam64idTracked(steam64id) {
 function isItemTracked(itemName) {
   const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(itemName)?.id;
   if (itemId) return getUidsForItem(itemId).size > 0;
-  return readConfig().some((account) => (account.customItems || []).includes(itemName));
+  return readAccounts().some((account) => (account.customItems || []).includes(itemName));
 }
 
 // Fetch inventory for one steam64id, upsert to DB, enqueue found items for pricing
 async function processInventoryForSteamId(steam64id, enqueuePrice) {
-  if (db.getBadEntries('steam64id').includes(steam64id)) {
-    logger.warn({ steam64id }, 'Skipping bad steam64id');
+  if (db.isBad('steam64id', steam64id)) {
+    logger.warn({ steam64id }, 'inventory - skipping bad steam64id');
     return;
   }
 
   let descriptions;
   const fetchStart = Date.now();
   try {
-    logger.info({ steam64id }, 'Fetching inventory');
+    logger.info({ steam64id }, 'inventory - fetching');
     descriptions = await fetchInventory(steam64id);
     const durationMs = Date.now() - fetchStart;
-    logger.info({ steam64id, itemCount: descriptions.length, durationMs }, 'Inventory fetched');
+    logger.info({ steam64id, itemCount: descriptions.length, durationMs }, 'inventory - fetched');
     db.prepare(
       'INSERT INTO inventory_fetches (steam64id, item_count, duration_ms, fetched_at) VALUES (?, ?, ?, ?)'
     ).run(steam64id, descriptions.length, durationMs, Math.floor(Date.now() / 1000));
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
     if (isRateLimit) {
-      logger.error({ err, steam64id }, 'Failed to fetch inventory (rate limited), skipping');
+      logger.error({ err, steam64id }, 'inventory - rate limited, skipping');
       return 'rate_limited';
     }
     if (isNetworkError(err)) {
-      logger.error({ err, steam64id }, 'Failed to fetch inventory (network error), will retry');
+      logger.error({ err, steam64id }, 'inventory - network error, will retry');
       return 'retry';
     }
     db.markBad('steam64id', steam64id, err.message);
-    logger.warn({ steam64id, reason: err.message }, 'Marked steam64id as bad');
+    logger.warn({ steam64id, reason: err.message }, 'inventory - marked steam64id as bad');
     return;
   }
 
@@ -113,8 +113,8 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
 
 // Fetch price for one item, insert snapshot, detect spikes
 async function processPriceForItem(itemName) {
-  if (db.getBadEntries('item').includes(itemName)) {
-    logger.warn({ itemName }, 'Skipping bad item');
+  if (db.isBad('item', itemName)) {
+    logger.warn({ itemName }, 'price - skipping bad item');
     return;
   }
 
@@ -124,21 +124,21 @@ async function processPriceForItem(itemName) {
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
     if (isRateLimit) {
-      logger.error({ err, itemName }, 'Failed to fetch price (rate limited), skipping');
+      logger.error({ err, itemName }, 'price - rate limited, skipping');
       return 'rate_limited';
     }
     if (isNetworkError(err)) {
-      logger.error({ err, itemName }, 'Failed to fetch price (network error), will retry');
+      logger.error({ err, itemName }, 'price - network error, will retry');
       return 'retry';
     }
     db.markBad('item', itemName, err.message);
-    logger.warn({ itemName, reason: err.message }, 'Marked item as bad');
+    logger.warn({ itemName, reason: err.message }, 'price - marked item as bad');
     return;
   }
 
   if (!priceData || priceData.lowest_price === null) {
     db.markBad('item', itemName, 'Steam returned no price data (success=false)');
-    logger.warn({ itemName }, 'Marked item as bad: no price data from Steam');
+    logger.warn({ itemName }, 'price - marked item as bad, no price data from Steam');
     return;
   }
 
@@ -165,8 +165,9 @@ async function processPriceForItem(itemName) {
   `
   ).run(itemId, priceData.lowest_price, priceData.median_price, priceData.volume, scanTime);
 
+  // queue requires this module, so it is loaded lazily here and in runScan
   const { priceQueueSize } = require('./queue').getQueueState();
-  logger.info({ itemName, lowest_price: priceData.lowest_price, priceQueueSize }, 'Price snapshot recorded');
+  logger.info({ itemName, lowest_price: priceData.lowest_price, priceQueueSize }, 'price - snapshot recorded');
 
   const sevenDayLow = row && row.seven_day_low;
 
@@ -191,7 +192,7 @@ async function processPriceForItem(itemName) {
         shouldAlert = false;
         logger.info(
           { itemName, currentPrice: priceData.lowest_price, lastAlertPrice: lastAlert.price_at_alert },
-          'Price spike still active but below re-alert threshold, skipping'
+          'alert - spike still active but below re-alert threshold, skipping'
         );
       }
     }
@@ -215,7 +216,7 @@ async function processPriceForItem(itemName) {
 
       logger.warn(
         { itemName, spikePct: spikePct.toFixed(2), currentPrice: priceData.lowest_price, sevenDayLow },
-        'Price spike alert: item price has spiked significantly'
+        'alert - price spike'
       );
     }
   }
@@ -226,10 +227,10 @@ async function processPriceForItem(itemName) {
 // Enqueue all accounts' steam64ids and customItems for scanning (used by POST /alerts/scan)
 async function runScan(force = false) {
   const { enqueueInventory, enqueueInventoryIfDue, enqueuePrice, enqueuePriceIfDue } = require('./queue');
-  const accounts = readConfig();
+  const accounts = readAccounts();
 
   if (accounts.length === 0) {
-    logger.info('No accounts configured, skipping scan');
+    logger.info('scan - no accounts configured, skipping');
     return;
   }
 
@@ -242,7 +243,7 @@ async function runScan(force = false) {
   }
 
   scanState.lastScannedAt = Math.floor(Date.now() / 1000);
-  logger.info({ force }, 'Scan triggered: items enqueued');
+  logger.info({ force }, 'scan - items enqueued');
 }
 
 module.exports = {

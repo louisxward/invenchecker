@@ -1,9 +1,9 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
-const { DB_PATH: dbPath } = require('./appConfig');
+const { DB_PATH: dbPath } = require('./config');
 
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -196,17 +196,36 @@ function markBad(type, value, reason) {
   );
 }
 
-function getBadEntries(type) {
+function getBadReason(type, value) {
+  return db.prepare('SELECT reason FROM bad_entries WHERE type = ? AND value = ?').get(type, value)?.reason ?? null;
+}
+
+// Most recent price snapshot for an item name: { last, lowest_price }, or undefined if never priced
+function getLastPriceSnapshot(itemName) {
   return db
-    .prepare('SELECT value FROM bad_entries WHERE type = ?')
-    .all(type)
-    .map((r) => r.value);
+    .prepare(
+      `SELECT ps.captured_at AS last, ps.lowest_price
+       FROM price_snapshots ps
+       WHERE ps.item_id = (SELECT id FROM item_names WHERE name = ?)
+       ORDER BY ps.captured_at DESC
+       LIMIT 1`
+    )
+    .get(itemName);
+}
+
+// Unix seconds of the last successful inventory fetch, or 0 if there has been none
+function getLastInventoryFetchAt(steam64id) {
+  return (
+    db.prepare('SELECT MAX(fetched_at) AS last FROM inventory_fetches WHERE steam64id = ?').get(steam64id)?.last ?? 0
+  );
 }
 
 // Attach helpers so existing `const db = require('./db')` imports keep working
 db.getOrCreateItemId = getOrCreateItemId;
 db.isBad = isBad;
 db.markBad = markBad;
-db.getBadEntries = getBadEntries;
+db.getBadReason = getBadReason;
+db.getLastPriceSnapshot = getLastPriceSnapshot;
+db.getLastInventoryFetchAt = getLastInventoryFetchAt;
 
 module.exports = db;

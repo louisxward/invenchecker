@@ -1,8 +1,5 @@
 'use strict';
 
-const logger = require('./logger');
-const { readConfig } = require('./config');
-const { sleep } = require('./steam');
 const {
   WORKER_IDLE_SLEEP_MS,
   REENQUEUE_DELAY_MS,
@@ -10,10 +7,13 @@ const {
   INVENTORY_RATE_LIMIT_MS,
   QUEUE_WARN_SIZE,
   RATE_LIMIT_RETRY_MS,
-} = require('./appConfig');
-const { processInventoryForSteamId, processPriceForItem, isSteam64idTracked, isItemTracked } = require('./scanner');
-const { getRuleForPrice } = require('./rules');
+} = require('./config');
+const logger = require('./logger');
+const { readAccounts } = require('./accountStore');
 const db = require('./db');
+const { getRuleForPrice } = require('./rules');
+const { processInventoryForSteamId, processPriceForItem, isSteam64idTracked, isItemTracked } = require('./scanner');
+const { sleep } = require('./steam');
 
 // Two FIFO queues keyed by their natural identifier (steam64id / itemName).
 // Using Map preserves insertion order, giving FIFO semantics.
@@ -24,43 +24,36 @@ const processingInventory = new Set(); // steam64ids currently being fetched
 
 let workersStarted = false;
 
-function warnIfPressured(queue, rateLimitMs, label) {
+function warnIfPressured(queue, rateLimitMs, area) {
   const size = queue.size;
   if (size < QUEUE_WARN_SIZE) return;
   const etaSecs = Math.round((size * rateLimitMs) / 1000);
-  logger.warn({ queueSize: size, etaSecs }, `${label} queue is backed up`);
+  logger.warn({ queueSize: size, etaSecs }, `${area} - queue is backed up`);
 }
 
 function enqueueInventory(steam64id) {
   if (inventoryQueue.has(steam64id)) return;
   inventoryQueue.set(steam64id, true);
-  warnIfPressured(inventoryQueue, INVENTORY_RATE_LIMIT_MS, 'Inventory');
-  logger.debug({ steam64id }, 'Enqueued inventory fetch');
+  warnIfPressured(inventoryQueue, INVENTORY_RATE_LIMIT_MS, 'inventory');
+  logger.debug({ steam64id }, 'inventory - enqueued');
 }
 
 function enqueuePrice(itemName) {
   if (priceQueue.has(itemName)) return;
   priceQueue.set(itemName, true);
-  warnIfPressured(priceQueue, PRICE_RATE_LIMIT_MS, 'Price');
-  logger.debug({ itemName }, 'Enqueued price fetch');
+  warnIfPressured(priceQueue, PRICE_RATE_LIMIT_MS, 'price');
+  logger.debug({ itemName }, 'price - enqueued');
 }
 
 function enqueuePriceIfDue(itemName) {
   if (priceQueue.has(itemName)) return;
-  const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(itemName)?.id;
-  if (itemId) {
-    const row = db
-      .prepare(
-        'SELECT captured_at AS last, lowest_price FROM price_snapshots WHERE item_id = ? ORDER BY captured_at DESC LIMIT 1'
-      )
-      .get(itemId);
-    if (row) {
-      const scanMs = getRuleForPrice(row.lowest_price).scanMs;
-      const elapsedMs = (Math.floor(Date.now() / 1000) - row.last) * 1000;
-      if (elapsedMs < scanMs) {
-        logger.debug({ itemName, elapsedMs, scanMs }, 'Price scan not yet due, skipping');
-        return;
-      }
+  const row = db.getLastPriceSnapshot(itemName);
+  if (row) {
+    const scanMs = getRuleForPrice(row.lowest_price).scanMs;
+    const elapsedMs = (Math.floor(Date.now() / 1000) - row.last) * 1000;
+    if (elapsedMs < scanMs) {
+      logger.debug({ itemName, elapsedMs, scanMs }, 'price - not yet due, skipping');
+      return;
     }
   }
   enqueuePrice(itemName);
@@ -68,10 +61,9 @@ function enqueuePriceIfDue(itemName) {
 
 function enqueueInventoryIfDue(steam64id) {
   if (inventoryQueue.has(steam64id) || processingInventory.has(steam64id)) return;
-  const row = db.prepare('SELECT MAX(fetched_at) AS last FROM inventory_fetches WHERE steam64id = ?').get(steam64id);
-  const elapsedMs = (Math.floor(Date.now() / 1000) - (row?.last ?? 0)) * 1000;
+  const elapsedMs = (Math.floor(Date.now() / 1000) - db.getLastInventoryFetchAt(steam64id)) * 1000;
   if (elapsedMs < REENQUEUE_DELAY_MS) {
-    logger.debug({ steam64id, elapsedMs }, 'Inventory scan not yet due, skipping');
+    logger.debug({ steam64id, elapsedMs }, 'inventory - not yet due, skipping');
     return;
   }
   enqueueInventory(steam64id);
@@ -81,7 +73,7 @@ function enqueueInventoryIfDue(steam64id) {
 // deleted account or a sold item drops out of rotation, as it would on a restart
 function requeueInventory(steam64id, enqueue = enqueueInventory) {
   if (!isSteam64idTracked(steam64id)) {
-    logger.info({ steam64id }, 'steam64id no longer tracked, dropping from rotation');
+    logger.info({ steam64id }, 'inventory - steam64id no longer tracked, dropping from rotation');
     return;
   }
   enqueue(steam64id);
@@ -89,7 +81,7 @@ function requeueInventory(steam64id, enqueue = enqueueInventory) {
 
 function requeuePrice(itemName) {
   if (!isItemTracked(itemName)) {
-    logger.info({ itemName }, 'Item no longer tracked, dropping from rotation');
+    logger.info({ itemName }, 'price - item no longer tracked, dropping from rotation');
     return;
   }
   enqueuePrice(itemName);
@@ -100,7 +92,7 @@ async function inventoryWorker() {
   while (true) {
     if (inventoryQueue.size === 0) {
       if (wasActive) {
-        logger.info('Inventory queue drained');
+        logger.info('inventory - queue drained');
         wasActive = false;
       }
       await sleep(WORKER_IDLE_SLEEP_MS);
@@ -116,7 +108,7 @@ async function inventoryWorker() {
     try {
       result = await processInventoryForSteamId(steam64id, enqueuePriceIfDue);
     } catch (err) {
-      logger.error({ err, steam64id }, 'Unexpected error in inventory worker');
+      logger.error({ err, steam64id }, 'inventory - unexpected error in worker');
     } finally {
       processingInventory.delete(steam64id);
     }
@@ -124,7 +116,7 @@ async function inventoryWorker() {
     if (result === 'rate_limited' || result === 'retry') {
       logger.info(
         { steam64id, result, retryInMs: RATE_LIMIT_RETRY_MS },
-        'Inventory fetch failed, pausing before retry'
+        'inventory - fetch failed, pausing before retry'
       );
       await sleep(RATE_LIMIT_RETRY_MS);
       requeueInventory(steam64id, enqueueInventoryIfDue);
@@ -140,7 +132,7 @@ async function priceWorker() {
   while (true) {
     if (priceQueue.size === 0) {
       if (wasActive) {
-        logger.info('Price queue drained');
+        logger.info('price - queue drained');
         wasActive = false;
       }
       await sleep(WORKER_IDLE_SLEEP_MS);
@@ -155,11 +147,11 @@ async function priceWorker() {
     try {
       result = await processPriceForItem(itemName);
     } catch (err) {
-      logger.error({ err, itemName }, 'Unexpected error in price worker');
+      logger.error({ err, itemName }, 'price - unexpected error in worker');
     }
 
     if (result === 'rate_limited' || result === 'retry') {
-      logger.info({ itemName, result, retryInMs: RATE_LIMIT_RETRY_MS }, 'Price fetch failed, pausing before retry');
+      logger.info({ itemName, result, retryInMs: RATE_LIMIT_RETRY_MS }, 'price - fetch failed, pausing before retry');
       await sleep(RATE_LIMIT_RETRY_MS);
       requeuePrice(itemName);
     } else {
@@ -175,33 +167,23 @@ function startQueues() {
   workersStarted = true;
 
   // Seed queues, respecting last scan time to avoid redundant scans on restart
-  const accounts = readConfig();
+  const accounts = readAccounts();
   const nowSec = Math.floor(Date.now() / 1000);
 
   for (const account of accounts) {
     for (const steam64id of account.steam64ids || []) {
-      const row = db
-        .prepare('SELECT MAX(fetched_at) AS last FROM inventory_fetches WHERE steam64id = ?')
-        .get(steam64id);
-      const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
+      const elapsedMs = (nowSec - db.getLastInventoryFetchAt(steam64id)) * 1000;
       if (elapsedMs >= REENQUEUE_DELAY_MS) {
         enqueueInventory(steam64id);
       } else {
         const resumeInMs = REENQUEUE_DELAY_MS - elapsedMs;
         setTimeout(() => requeueInventory(steam64id), resumeInMs);
-        logger.info({ steam64id, resumeInMs }, 'Inventory scan not yet due, scheduling');
+        logger.info({ steam64id, resumeInMs }, 'inventory - not yet due, scheduling');
       }
     }
 
     for (const item of account.customItems || []) {
-      const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(item)?.id;
-      const row = itemId
-        ? db
-            .prepare(
-              'SELECT captured_at AS last, lowest_price FROM price_snapshots WHERE item_id = ? ORDER BY captured_at DESC LIMIT 1'
-            )
-            .get(itemId)
-        : null;
+      const row = db.getLastPriceSnapshot(item);
       const scanMs = row?.lowest_price != null ? getRuleForPrice(row.lowest_price).scanMs : REENQUEUE_DELAY_MS;
       const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
       if (elapsedMs >= scanMs) {
@@ -209,15 +191,15 @@ function startQueues() {
       } else {
         const resumeInMs = scanMs - elapsedMs;
         setTimeout(() => requeuePrice(item), resumeInMs);
-        logger.info({ item, resumeInMs }, 'Price scan not yet due, scheduling');
+        logger.info({ item, resumeInMs }, 'price - not yet due, scheduling');
       }
     }
   }
 
-  logger.info({ inventoryQueue: inventoryQueue.size, priceQueue: priceQueue.size }, 'Queue workers started');
+  logger.info({ inventoryQueue: inventoryQueue.size, priceQueue: priceQueue.size }, 'queue - workers started');
 
-  inventoryWorker().catch((err) => logger.fatal({ err }, 'Inventory worker crashed'));
-  priceWorker().catch((err) => logger.fatal({ err }, 'Price worker crashed'));
+  inventoryWorker().catch((err) => logger.fatal({ err }, 'inventory - worker crashed'));
+  priceWorker().catch((err) => logger.fatal({ err }, 'price - worker crashed'));
 }
 
 function getQueueState() {
