@@ -217,8 +217,10 @@ describe('Scanner', () => {
     });
   });
 
+  // With no rules.json the built-in rules apply. Prices from £10 to £50 use alert +20% and
+  // re-alert +35%, so over a £10 7-day low: alert from £12.00, re-alert from £13.50.
   describe('price spike alerts', () => {
-    it('creates an alert when price is 15%+ above 7-day low', async () => {
+    it('creates an alert when price reaches the alert threshold', async () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       insertSnapshot(ITEM_NAME, 10.0, 3);
       steam.fetchPrice.mockResolvedValue({ lowest_price: 12.0, median_price: 13.0, volume: 30 });
@@ -285,16 +287,15 @@ describe('Scanner', () => {
       expect(alert).toBeUndefined();
     });
 
-    // With no rules.json the default rule applies: alert at +15%, re-alert at +20% over the 7-day low.
     it('suppresses a re-alert while the spike is still below the re-alert threshold', async () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
-      // Insert a prior alert at $12.00
+      // A prior alert at £12.00
       db.prepare(
         'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 20.0, 12.0, 10.0, Math.floor(Date.now() / 1000) - 60);
-      // Current price $11.90 — above the alert threshold ($11.50) but below re-alert ($12.00)
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 11.9, median_price: 13.0, volume: 30 });
+      // Current price £13.00: above the alert threshold (£12.00) but below re-alert (£13.50)
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 13.0, median_price: 13.0, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 
@@ -307,12 +308,12 @@ describe('Scanner', () => {
     it('fires a new alert when price reaches the re-alert threshold', async () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
-      // Insert a prior alert at $12.00
+      // A prior alert at £12.00
       db.prepare(
         'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 20.0, 12.0, 10.0, Math.floor(Date.now() / 1000) - 60);
-      // Current price $12.00 — at the re-alert threshold (7-day low * 1.20)
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.0, median_price: 13.0, volume: 30 });
+      // Current price £13.50: at the re-alert threshold (7-day low * 1.35)
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 13.5, median_price: 13.0, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 
@@ -326,16 +327,16 @@ describe('Scanner', () => {
       setAccounts([{ uid: UID, steam64ids: [], customItems: [ITEM_NAME] }]);
       const itemId = insertSnapshot(ITEM_NAME, 10.0, 3);
       const alertTime = Math.floor(Date.now() / 1000) - 120;
-      // Insert a prior alert at $12.00
+      // A prior alert at £12.00
       db.prepare(
         'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 20.0, 12.0, 10.0, alertTime);
-      // Insert a snapshot after the alert where price dropped below spike threshold ($10 * 1.15 = $11.50)
+      // A snapshot after the alert where the price dropped below the alert threshold (£12.00)
       db.prepare(
         'INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 11.0, 11.0, 50, alertTime + 60);
-      // Current price $11.90 — below re-alert ($12.00), but the spike reset since the last alert
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 11.9, median_price: 12.5, volume: 30 });
+      // Current price £13.00: below re-alert (£13.50), but the spike reset since the last alert
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 13.0, median_price: 12.5, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 

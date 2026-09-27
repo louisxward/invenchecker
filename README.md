@@ -51,15 +51,18 @@ Controls scan interval and alert thresholds per price tier. Rules are evaluated 
 | `alertPct`   | % above 7-day low to trigger an alert                             |
 | `realertPct` | % above 7-day low to allow a re-alert within the same spike event |
 
-Without a `rules.json` (or if it's invalid), one built-in rule applies to every price: re-scan every 6 hours, alert at +15%, re-alert at +20%. Example `rules.json`:
+Without a `rules.json` (or if it's invalid), these built-in rules apply. A `rules.json` replaces them completely, so copy them as a starting point:
 
 ```json
 [
-  { "minPrice": 10, "scanHours": 12, "alertPct": 30, "realertPct": 50 },
-  { "minPrice": 1, "scanHours": 12, "alertPct": 50, "realertPct": 75 },
-  { "minPrice": 0, "scanHours": 6, "alertPct": 15, "realertPct": 20 }
+  { "minPrice": 50, "scanHours": 3, "alertPct": 15, "realertPct": 25 },
+  { "minPrice": 10, "scanHours": 6, "alertPct": 20, "realertPct": 35 },
+  { "minPrice": 1, "scanHours": 12, "alertPct": 30, "realertPct": 50 },
+  { "minPrice": 0, "scanHours": 24, "alertPct": 50, "realertPct": 100 }
 ]
 ```
+
+Cheap items move in large percentage steps (1p on a 5p item is +20%) and make up most of an inventory, so they alert least readily and are scanned least often. Valuable items are scanned most often and alert on smaller moves.
 
 Changes take effect on restart.
 
@@ -143,7 +146,7 @@ Two queues run continuously in the background:
 - **Inventory queue** — fetches each Steam64 ID's inventory, upserts items to the DB, and feeds found items into the price queue.
 - **Price queue** — fetches the current market price for each item (rate-limited to ~1 req/sec), records a snapshot, and creates an alert if the price spikes above its 7-day low by the tier threshold.
 
-After each item is processed it is re-enqueued according to its price tier (see `rules.json`): by default, items worth ≥ £10 re-scan every 12 h, items worth ≥ £1 every 12 h, and cheaper items every 6 h. Alert and re-alert thresholds also vary by tier.
+After each item is processed it is re-enqueued according to its price tier (see `rules.json`): with the built-in rules, items worth ≥ £50 re-scan every 3 h, ≥ £10 every 6 h, ≥ £1 every 12 h, and cheaper items every 24 h. Alert and re-alert thresholds also vary by tier.
 
 When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used. Once no account tracks a steam64id or item any more (account deleted, entry removed, or item no longer in the inventory), it drops out of the rotation at its next scheduled scan.
 

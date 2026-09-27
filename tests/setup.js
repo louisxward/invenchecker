@@ -9,5 +9,5 @@ process.env.DB_PATH = ':memory:';
 process.env.LOG_LEVEL = 'silent';
 // No accounts.json to import (tests/db.test.js covers the import)
 process.env.CONFIG_PATH = path.join(os.tmpdir(), `invenchecker-test-accounts-${process.pid}-missing.json`);
-// Never pick up a real data/rules.json; tests rely on the built-in default rule.
+// Never pick up a real data/rules.json; tests rely on the built-in default rules.
 process.env.RULES_PATH = path.join(os.tmpdir(), `invenchecker-test-rules-${process.pid}-missing.json`);

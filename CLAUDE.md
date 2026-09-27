@@ -48,7 +48,7 @@ The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `data
 
 ## Persistence
 
-- **`data/rules.json`**: hand-edited price tiers, sorted by `minPrice` descending. Missing or invalid falls back to one built-in rule (6h, +15%, +20%).
+- **`data/rules.json`**: hand-edited price tiers, sorted by `minPrice` descending. Missing or invalid falls back to `DEFAULT_RULES` in `rules.js` (four tiers: ≥ £50 3h/+15%/+25%, ≥ £10 6h/+20%/+35%, ≥ £1 12h/+30%/+50%, below 24h/+50%/+100%). A file replaces them completely.
 - **`data/invenchecker.db`** (SQLite, WAL): `accounts` with `account_steam64ids` and `account_custom_items` (ordered by `position`, repeats allowed, since the API returns lists as stored), `item_names` (name ↔ id), `price_snapshots`, `alerts`, `alert_recipients` (per-uid resolved state), `inventory_items` (per steam64id, `missing` when it leaves the inventory), `inventory_fetches`, `bad_entries` (steam64ids/items Steam rejected; permanent, and the API refuses to re-add them). Migrations (`database/migrations.js`) are numbered by `user_version`: 1 is the original schema (its steps still detect older layouts by their columns), 2 adds the account tables and imports `data/accounts.json` (`CONFIG_PATH`) once, refusing to start on a malformed file. Add new migrations to the end of `MIGRATIONS`.
 - **`data/accounts.json`**: legacy only. Imported by migration 2 and then ignored; startup logs a warning while it exists.
 
@@ -65,7 +65,7 @@ The layers are routes, `queue.js` and `scanner.js` → `repositories/` → `data
 - Logging is structured, one line per event: `logger.info({ steam64id }, 'inventory - fetched')`. The area is short and lowercase (`startup`, `shutdown`, `process`, `api`, `queue`, `inventory`, `price`, `alert`, `scan`, `accounts`, `rules`). Errors pass `{ err }`.
 - Import order: `node:` built-ins, packages, `config`/`logger`, then internal modules.
 - Catch variables are `err`; `===` except `== null`.
-- Tests: `tests/setup.js` points each Jest worker at an in-memory DB, a missing accounts.json (nothing to import) and a missing rules.json (so the built-in rule applies). `tests/helpers/accounts.js` `setAccounts()` replaces the accounts. Test files that touch the database call `require('../src/database').init()` in `beforeAll`, and may use `getDb()` for fixtures. `tests/db.test.js` runs the migrations against real temp files (`loadModules` sets `DB_PATH` before config is loaded). Route tests mount a single router on a bare Express app; `health.test.js` uses `createApp()`.
+- Tests: `tests/setup.js` points each Jest worker at an in-memory DB, a missing accounts.json (nothing to import) and a missing rules.json (so the built-in rules apply; the scanner spike tests use the £10 tier). `tests/helpers/accounts.js` `setAccounts()` replaces the accounts. Test files that touch the database call `require('../src/database').init()` in `beforeAll`, and may use `getDb()` for fixtures. `tests/db.test.js` runs the migrations against real temp files (`loadModules` sets `DB_PATH` before config is loaded). Route tests mount a single router on a bare Express app; `health.test.js` uses `createApp()`.
 
 ## Gotchas
 

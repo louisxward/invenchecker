@@ -4,7 +4,15 @@ const fs = require('node:fs');
 const { RULES_PATH } = require('./config');
 const logger = require('./logger');
 
-const DEFAULT_RULES = [{ minPrice: 0, scanHours: 6, alertPct: 15, realertPct: 20 }];
+// Used when rules.json is missing or invalid. Cheap items move in big percentage steps (1p on a
+// 5p item is +20%) and are most of an inventory, so they alert least readily and are scanned least
+// often; valuable items the other way round.
+const DEFAULT_RULES = [
+  { minPrice: 50, scanHours: 3, alertPct: 15, realertPct: 25 },
+  { minPrice: 10, scanHours: 6, alertPct: 20, realertPct: 35 },
+  { minPrice: 1, scanHours: 12, alertPct: 30, realertPct: 50 },
+  { minPrice: 0, scanHours: 24, alertPct: 50, realertPct: 100 },
+];
 
 let cachedRules = null;
 
