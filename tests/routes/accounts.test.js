@@ -83,6 +83,38 @@ describe('Accounts routes', () => {
     });
   });
 
+  describe('requests without a JSON body', () => {
+    it('POST /accounts returns 400', async () => {
+      const res = await request(app).post('/accounts');
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /accounts/discord returns 400', async () => {
+      const res = await request(app).post('/accounts/discord');
+      expect(res.status).toBe(400);
+    });
+
+    it('PUT /accounts/:uid leaves the account unchanged', async () => {
+      const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '501', friendlyName: 'Same' }))
+        .body;
+      const res = await request(app).put(`/accounts/${uid}`);
+      expect(res.status).toBe(200);
+      expect(res.body.friendlyName).toBe('Same');
+    });
+
+    it('POST /accounts/:uid/steam64ids returns 400', async () => {
+      const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '502' })).body;
+      const res = await request(app).post(`/accounts/${uid}/steam64ids`);
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /accounts/:uid/customItems returns 400', async () => {
+      const { uid } = (await request(app).post('/accounts/discord').send({ discordId: '503' })).body;
+      const res = await request(app).post(`/accounts/${uid}/customItems`);
+      expect(res.status).toBe(400);
+    });
+  });
+
   describe('POST /accounts/discord', () => {
     it('creates a minimal account', async () => {
       const res = await request(app).post('/accounts/discord').send({ discordId: '999' });

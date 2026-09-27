@@ -10,6 +10,12 @@ const logger = require('../logger');
 const { enqueueInventoryIfDue, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require('../queue');
 const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require('../appConfig');
 
+// Express 5 leaves req.body undefined when there is no JSON body; handlers expect an object
+router.use((req, _res, next) => {
+  req.body ??= {};
+  next();
+});
+
 function getAccount(uid) {
   const accounts = readConfig();
   const account = accounts.find((a) => a.uid === uid);

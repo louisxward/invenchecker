@@ -113,4 +113,21 @@ describe('Alerts routes', () => {
       expect(res.body.resolved).toBe(0);
     });
   });
+  describe('POST /alerts/scan', () => {
+    it('enqueues without a body', async () => {
+      const res = await request(app).post('/alerts/scan');
+      expect(res.status).toBe(200);
+      expect(res.body.force).toBe(false);
+    });
+
+    it('accepts force as a query parameter', async () => {
+      const res = await request(app).post('/alerts/scan?force=true');
+      expect(res.body.force).toBe(true);
+    });
+
+    it('accepts force in the body', async () => {
+      const res = await request(app).post('/alerts/scan').send({ force: true });
+      expect(res.body.force).toBe(true);
+    });
+  });
 });
