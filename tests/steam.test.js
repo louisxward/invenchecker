@@ -22,11 +22,13 @@ describe('fetchInventory pagination', () => {
   });
 
   it('returns all descriptions from a single page', async () => {
-    fetchSpy.mockResolvedValueOnce(mockResponse({
-      success: true,
-      descriptions: [{ market_hash_name: 'Item A' }, { market_hash_name: 'Item B' }],
-      more_items: 0,
-    }));
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse({
+        success: true,
+        descriptions: [{ market_hash_name: 'Item A' }, { market_hash_name: 'Item B' }],
+        more_items: 0,
+      })
+    );
 
     const result = await fetchInventory('76561198000000001');
     expect(result).toHaveLength(2);
@@ -37,17 +39,21 @@ describe('fetchInventory pagination', () => {
 
   it('fetches multiple pages and accumulates descriptions', async () => {
     fetchSpy
-      .mockResolvedValueOnce(mockResponse({
-        success: true,
-        descriptions: [{ market_hash_name: 'Item A' }],
-        more_items: 1,
-        last_assetid: 'cursor123',
-      }))
-      .mockResolvedValueOnce(mockResponse({
-        success: true,
-        descriptions: [{ market_hash_name: 'Item B' }, { market_hash_name: 'Item C' }],
-        more_items: 0,
-      }));
+      .mockResolvedValueOnce(
+        mockResponse({
+          success: true,
+          descriptions: [{ market_hash_name: 'Item A' }],
+          more_items: 1,
+          last_assetid: 'cursor123',
+        })
+      )
+      .mockResolvedValueOnce(
+        mockResponse({
+          success: true,
+          descriptions: [{ market_hash_name: 'Item B' }, { market_hash_name: 'Item C' }],
+          more_items: 0,
+        })
+      );
 
     const result = await fetchInventory('76561198000000001');
     expect(result).toHaveLength(3);

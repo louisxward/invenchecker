@@ -29,13 +29,13 @@ function getUidsForItem(itemId) {
   const uids = new Set();
   const accounts = readConfig();
 
-  const invRows = db.prepare(
-    'SELECT DISTINCT steam64id FROM inventory_items WHERE item_id = ? AND missing = 0'
-  ).all(itemId);
+  const invRows = db
+    .prepare('SELECT DISTINCT steam64id FROM inventory_items WHERE item_id = ? AND missing = 0')
+    .all(itemId);
 
   const steam64idToUid = new Map();
   for (const account of accounts) {
-    for (const id of (account.steam64ids || [])) {
+    for (const id of account.steam64ids || []) {
       steam64idToUid.set(id, account.uid);
     }
   }
@@ -131,16 +131,22 @@ async function processPriceForItem(itemName) {
   const itemId = db.getOrCreateItemId(itemName);
   const sevenDayAgo = scanTime - SEVEN_DAYS_SECS;
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT MIN(lowest_price) AS seven_day_low
     FROM price_snapshots
     WHERE item_id = ? AND captured_at >= ? AND lowest_price IS NOT NULL
-  `).get(itemId, sevenDayAgo);
+  `
+    )
+    .get(itemId, sevenDayAgo);
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at)
     VALUES (?, ?, ?, ?, ?)
-  `).run(itemId, priceData.lowest_price, priceData.median_price, priceData.volume, scanTime);
+  `
+  ).run(itemId, priceData.lowest_price, priceData.median_price, priceData.volume, scanTime);
 
   const { priceQueueSize } = require('./queue').getQueueState();
   logger.info({ itemName, lowest_price: priceData.lowest_price, priceQueueSize }, 'Price snapshot recorded');
@@ -148,17 +154,21 @@ async function processPriceForItem(itemName) {
   const sevenDayLow = row && row.seven_day_low;
 
   if (sevenDayLow && sevenDayLow > 0 && priceData.lowest_price >= sevenDayLow * alertThreshold) {
-    const lastAlert = db.prepare(
-      'SELECT price_at_alert, created_at FROM alerts WHERE item_id = ? ORDER BY created_at DESC LIMIT 1'
-    ).get(itemId);
+    const lastAlert = db
+      .prepare('SELECT price_at_alert, created_at FROM alerts WHERE item_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(itemId);
 
     let shouldAlert = true;
     if (lastAlert && priceData.lowest_price < sevenDayLow * realertThreshold) {
-      const spikeReset = db.prepare(`
+      const spikeReset = db
+        .prepare(
+          `
         SELECT 1 FROM price_snapshots
         WHERE item_id = ? AND captured_at > ? AND lowest_price < ? * ?
         LIMIT 1
-      `).get(itemId, lastAlert.created_at, sevenDayLow, alertThreshold);
+      `
+        )
+        .get(itemId, lastAlert.created_at, sevenDayLow, alertThreshold);
 
       if (!spikeReset) {
         shouldAlert = false;
@@ -172,14 +182,16 @@ async function processPriceForItem(itemName) {
     if (shouldAlert) {
       const spikePct = ((priceData.lowest_price - sevenDayLow) / sevenDayLow) * 100;
 
-      const alertId = db.prepare(`
+      const alertId = db
+        .prepare(
+          `
         INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at)
         VALUES (?, ?, ?, ?, ?)
-      `).run(itemId, spikePct, priceData.lowest_price, sevenDayLow, scanTime).lastInsertRowid;
+      `
+        )
+        .run(itemId, spikePct, priceData.lowest_price, sevenDayLow, scanTime).lastInsertRowid;
 
-      const insertRecipient = db.prepare(
-        'INSERT OR IGNORE INTO alert_recipients (alert_id, uid) VALUES (?, ?)'
-      );
+      const insertRecipient = db.prepare('INSERT OR IGNORE INTO alert_recipients (alert_id, uid) VALUES (?, ?)');
       for (const uid of getUidsForItem(itemId)) {
         insertRecipient.run(alertId, uid);
       }
@@ -204,12 +216,12 @@ async function runScan(force = false) {
     return;
   }
 
-  const queueInv   = force ? enqueueInventory : enqueueInventoryIfDue;
-  const queuePrice = force ? enqueuePrice      : enqueuePriceIfDue;
+  const queueInv = force ? enqueueInventory : enqueueInventoryIfDue;
+  const queuePrice = force ? enqueuePrice : enqueuePriceIfDue;
 
   for (const account of accounts) {
-    for (const id of (account.steam64ids || [])) queueInv(id);
-    for (const item of (account.customItems || [])) queuePrice(item);
+    for (const id of account.steam64ids || []) queueInv(id);
+    for (const item of account.customItems || []) queuePrice(item);
   }
 
   scanState.lastScannedAt = Math.floor(Date.now() / 1000);

@@ -28,7 +28,8 @@ router.get('/', (req, res) => {
 
 // GET /alerts/user/:uid — unresolved alerts for a specific uid
 router.get('/user/:uid', (req, res) => {
-  const alerts = db.prepare(`${RECIPIENT_SELECT} WHERE r.uid = ? AND r.resolved = 0 ORDER BY a.created_at DESC`)
+  const alerts = db
+    .prepare(`${RECIPIENT_SELECT} WHERE r.uid = ? AND r.resolved = 0 ORDER BY a.created_at DESC`)
     .all(req.params.uid);
   res.json(alerts);
 });
@@ -48,9 +49,9 @@ router.put('/recipients/:id/resolve', (req, res) => {
 // PUT /alerts/user/:uid/resolve-all — resolve all unresolved alerts for a uid
 router.put('/user/:uid/resolve-all', (req, res) => {
   const now = Math.floor(Date.now() / 1000);
-  const { changes } = db.prepare(
-    'UPDATE alert_recipients SET resolved = 1, resolved_at = ? WHERE uid = ? AND resolved = 0'
-  ).run(now, req.params.uid);
+  const { changes } = db
+    .prepare('UPDATE alert_recipients SET resolved = 1, resolved_at = ? WHERE uid = ? AND resolved = 0')
+    .run(now, req.params.uid);
 
   res.json({ resolved: changes });
 });

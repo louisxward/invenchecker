@@ -22,7 +22,7 @@ db.exec(`
 
 // ── Phase 1: price_snapshots + alerts base migration ─────────────────────────
 
-const psColumns = db.pragma('table_info(price_snapshots)').map(c => c.name);
+const psColumns = db.pragma('table_info(price_snapshots)').map((c) => c.name);
 
 if (psColumns.length === 0) {
   // Fresh database — create tables with normalized schema (no resolved on alerts)
@@ -98,7 +98,7 @@ if (psColumns.length === 0) {
 
 // ── Phase 2: remove resolved/resolved_at from alerts if still present ────────
 
-const alertColumns = db.pragma('table_info(alerts)').map(c => c.name);
+const alertColumns = db.pragma('table_info(alerts)').map((c) => c.name);
 if (alertColumns.includes('resolved')) {
   db.exec(`
     CREATE TABLE alerts_new (
@@ -182,12 +182,19 @@ function isBad(type, value) {
 }
 
 function markBad(type, value, reason) {
-  db.prepare('INSERT OR REPLACE INTO bad_entries (type, value, reason, added_at) VALUES (?, ?, ?, ?)')
-    .run(type, value, reason, Math.floor(Date.now() / 1000));
+  db.prepare('INSERT OR REPLACE INTO bad_entries (type, value, reason, added_at) VALUES (?, ?, ?, ?)').run(
+    type,
+    value,
+    reason,
+    Math.floor(Date.now() / 1000)
+  );
 }
 
 function getBadEntries(type) {
-  return db.prepare('SELECT value FROM bad_entries WHERE type = ?').all(type).map(r => r.value);
+  return db
+    .prepare('SELECT value FROM bad_entries WHERE type = ?')
+    .all(type)
+    .map((r) => r.value);
 }
 
 // Attach helpers so existing `const db = require('./db')` imports keep working

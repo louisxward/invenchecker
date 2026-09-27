@@ -37,8 +37,9 @@ describe('Scanner', () => {
   function insertSnapshot(itemName, price, daysAgo = 0) {
     const itemId = db.getOrCreateItemId(itemName);
     const capturedAt = Math.floor(Date.now() / 1000) - daysAgo * 24 * 60 * 60;
-    db.prepare('INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)')
-      .run(itemId, price, price, 50, capturedAt);
+    db.prepare(
+      'INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(itemId, price, price, 50, capturedAt);
     return itemId;
   }
 
@@ -87,9 +88,9 @@ describe('Scanner', () => {
       const mockEnqueuePrice = jest.fn();
       await processInventoryForSteamId(STEAM_ID, mockEnqueuePrice);
       expect(mockEnqueuePrice).toHaveBeenCalledWith(ITEM_NAME);
-      const row = db.prepare(
-        'SELECT ii.* FROM inventory_items ii JOIN item_names n ON n.id = ii.item_id WHERE n.name = ?'
-      ).get(ITEM_NAME);
+      const row = db
+        .prepare('SELECT ii.* FROM inventory_items ii JOIN item_names n ON n.id = ii.item_id WHERE n.name = ?')
+        .get(ITEM_NAME);
       expect(row).not.toBeNull();
     });
 
@@ -103,9 +104,9 @@ describe('Scanner', () => {
       expect(mockEnqueuePrice).toHaveBeenCalledWith(ITEM_NAME);
 
       await processPriceForItem(ITEM_NAME);
-      const snapshot = db.prepare(
-        'SELECT ps.* FROM price_snapshots ps JOIN item_names n ON n.id = ps.item_id WHERE n.name = ?'
-      ).get(ITEM_NAME);
+      const snapshot = db
+        .prepare('SELECT ps.* FROM price_snapshots ps JOIN item_names n ON n.id = ps.item_id WHERE n.name = ?')
+        .get(ITEM_NAME);
       expect(snapshot.lowest_price).toBe(15.0);
     });
   });
@@ -140,9 +141,9 @@ describe('Scanner', () => {
     it('records a price snapshot for an item', async () => {
       steam.fetchPrice.mockResolvedValue({ lowest_price: 10.0, median_price: 11.0, volume: 50 });
       await processPriceForItem(ITEM_NAME);
-      const snapshot = db.prepare(
-        'SELECT ps.* FROM price_snapshots ps JOIN item_names n ON n.id = ps.item_id WHERE n.name = ?'
-      ).get(ITEM_NAME);
+      const snapshot = db
+        .prepare('SELECT ps.* FROM price_snapshots ps JOIN item_names n ON n.id = ps.item_id WHERE n.name = ?')
+        .get(ITEM_NAME);
       expect(snapshot).not.toBeNull();
       expect(snapshot.lowest_price).toBe(10.0);
     });
@@ -188,9 +189,9 @@ describe('Scanner', () => {
 
       await processPriceForItem(ITEM_NAME);
 
-      const alert = db.prepare(
-        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
-      ).get(ITEM_NAME);
+      const alert = db
+        .prepare('SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?')
+        .get(ITEM_NAME);
       expect(alert).not.toBeNull();
       expect(alert.price_at_alert).toBe(12.0);
       expect(alert.seven_day_low).toBe(10.0);
@@ -209,8 +210,8 @@ describe('Scanner', () => {
 
       const recipients = db.prepare('SELECT * FROM alert_recipients').all();
       expect(recipients).toHaveLength(2);
-      expect(recipients.map(r => r.uid)).toContain(UID);
-      expect(recipients.map(r => r.uid)).toContain(UID2);
+      expect(recipients.map((r) => r.uid)).toContain(UID);
+      expect(recipients.map((r) => r.uid)).toContain(UID2);
     });
 
     it('does not create an alert when price is below spike threshold', async () => {
@@ -220,9 +221,9 @@ describe('Scanner', () => {
 
       await processPriceForItem(ITEM_NAME);
 
-      const alert = db.prepare(
-        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
-      ).get(ITEM_NAME);
+      const alert = db
+        .prepare('SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?')
+        .get(ITEM_NAME);
       expect(alert).toBeUndefined();
     });
 
@@ -234,13 +235,13 @@ describe('Scanner', () => {
         'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 20.0, 12.0, 10.0, Math.floor(Date.now() / 1000) - 60);
       // Current price $12.50 — spiking but < 5% above $12.00
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.50, median_price: 13.0, volume: 30 });
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.5, median_price: 13.0, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 
-      const allAlerts = db.prepare(
-        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
-      ).all(ITEM_NAME);
+      const allAlerts = db
+        .prepare('SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?')
+        .all(ITEM_NAME);
       expect(allAlerts).toHaveLength(1); // no new alert created
     });
 
@@ -256,9 +257,9 @@ describe('Scanner', () => {
 
       await processPriceForItem(ITEM_NAME);
 
-      const allAlerts = db.prepare(
-        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
-      ).all(ITEM_NAME);
+      const allAlerts = db
+        .prepare('SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?')
+        .all(ITEM_NAME);
       expect(allAlerts).toHaveLength(2); // new alert created
     });
 
@@ -271,16 +272,17 @@ describe('Scanner', () => {
         'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(itemId, 20.0, 12.0, 10.0, alertTime);
       // Insert a snapshot after the alert where price dropped below spike threshold ($10 * 1.15 = $11.50)
-      db.prepare('INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)')
-        .run(itemId, 11.0, 11.0, 50, alertTime + 60);
+      db.prepare(
+        'INSERT INTO price_snapshots (item_id, lowest_price, median_price, volume, captured_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(itemId, 11.0, 11.0, 50, alertTime + 60);
       // Current price $12.10 — spiking again, < 5% above $12.00, but spike reset
-      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.10, median_price: 12.5, volume: 30 });
+      steam.fetchPrice.mockResolvedValue({ lowest_price: 12.1, median_price: 12.5, volume: 30 });
 
       await processPriceForItem(ITEM_NAME);
 
-      const allAlerts = db.prepare(
-        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
-      ).all(ITEM_NAME);
+      const allAlerts = db
+        .prepare('SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?')
+        .all(ITEM_NAME);
       expect(allAlerts).toHaveLength(2); // new alert fired because spike reset
     });
 
@@ -290,9 +292,9 @@ describe('Scanner', () => {
 
       await processPriceForItem(ITEM_NAME);
 
-      const alert = db.prepare(
-        'SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?'
-      ).get(ITEM_NAME);
+      const alert = db
+        .prepare('SELECT a.* FROM alerts a JOIN item_names n ON n.id = a.item_id WHERE n.name = ?')
+        .get(ITEM_NAME);
       expect(alert).toBeUndefined();
     });
   });

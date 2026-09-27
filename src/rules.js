@@ -4,9 +4,7 @@ const fs = require('fs');
 const logger = require('./logger');
 const { RULES_PATH } = require('./appConfig');
 
-const DEFAULT_RULES = [
-  { minPrice: 0, scanHours: 6, alertPct: 15, realertPct: 20 }
-];
+const DEFAULT_RULES = [{ minPrice: 0, scanHours: 6, alertPct: 15, realertPct: 20 }];
 
 let cachedRules = null;
 
@@ -38,10 +36,10 @@ function loadRules() {
 
 function getRuleForPrice(price) {
   const rules = loadRules();
-  const rule = rules.find(r => price >= r.minPrice) ?? rules[rules.length - 1];
+  const rule = rules.find((r) => price >= r.minPrice) ?? rules[rules.length - 1];
   return {
-    scanMs:           rule.scanHours * 60 * 60 * 1000,
-    alertThreshold:   1 + rule.alertPct   / 100,
+    scanMs: rule.scanHours * 60 * 60 * 1000,
+    alertThreshold: 1 + rule.alertPct / 100,
     realertThreshold: 1 + rule.realertPct / 100,
   };
 }

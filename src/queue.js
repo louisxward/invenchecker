@@ -3,7 +3,14 @@
 const logger = require('./logger');
 const { readConfig } = require('./config');
 const { sleep } = require('./steam');
-const { WORKER_IDLE_SLEEP_MS, REENQUEUE_DELAY_MS, PRICE_RATE_LIMIT_MS, INVENTORY_RATE_LIMIT_MS, QUEUE_WARN_SIZE, RATE_LIMIT_RETRY_MS } = require('./appConfig');
+const {
+  WORKER_IDLE_SLEEP_MS,
+  REENQUEUE_DELAY_MS,
+  PRICE_RATE_LIMIT_MS,
+  INVENTORY_RATE_LIMIT_MS,
+  QUEUE_WARN_SIZE,
+  RATE_LIMIT_RETRY_MS,
+} = require('./appConfig');
 const { processInventoryForSteamId, processPriceForItem } = require('./scanner');
 const { getRuleForPrice } = require('./rules');
 const db = require('./db');
@@ -12,7 +19,7 @@ const db = require('./db');
 // Using Map preserves insertion order, giving FIFO semantics.
 // A key present in the map means that item is pending — deduplication is free.
 const inventoryQueue = new Map(); // steam64id -> true
-const priceQueue = new Map();     // itemName  -> true
+const priceQueue = new Map(); // itemName  -> true
 const processingInventory = new Set(); // steam64ids currently being fetched
 
 let workersStarted = false;
@@ -42,9 +49,11 @@ function enqueuePriceIfDue(itemName) {
   if (priceQueue.has(itemName)) return;
   const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(itemName)?.id;
   if (itemId) {
-    const row = db.prepare(
-      'SELECT captured_at AS last, lowest_price FROM price_snapshots WHERE item_id = ? ORDER BY captured_at DESC LIMIT 1'
-    ).get(itemId);
+    const row = db
+      .prepare(
+        'SELECT captured_at AS last, lowest_price FROM price_snapshots WHERE item_id = ? ORDER BY captured_at DESC LIMIT 1'
+      )
+      .get(itemId);
     if (row) {
       const scanMs = getRuleForPrice(row.lowest_price).scanMs;
       const elapsedMs = (Math.floor(Date.now() / 1000) - row.last) * 1000;
@@ -149,8 +158,10 @@ function startQueues() {
   const nowSec = Math.floor(Date.now() / 1000);
 
   for (const account of accounts) {
-    for (const steam64id of (account.steam64ids || [])) {
-      const row = db.prepare('SELECT MAX(fetched_at) AS last FROM inventory_fetches WHERE steam64id = ?').get(steam64id);
+    for (const steam64id of account.steam64ids || []) {
+      const row = db
+        .prepare('SELECT MAX(fetched_at) AS last FROM inventory_fetches WHERE steam64id = ?')
+        .get(steam64id);
       const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
       if (elapsedMs >= REENQUEUE_DELAY_MS) {
         enqueueInventory(steam64id);
@@ -161,12 +172,16 @@ function startQueues() {
       }
     }
 
-    for (const item of (account.customItems || [])) {
+    for (const item of account.customItems || []) {
       const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(item)?.id;
       const row = itemId
-        ? db.prepare('SELECT captured_at AS last, lowest_price FROM price_snapshots WHERE item_id = ? ORDER BY captured_at DESC LIMIT 1').get(itemId)
+        ? db
+            .prepare(
+              'SELECT captured_at AS last, lowest_price FROM price_snapshots WHERE item_id = ? ORDER BY captured_at DESC LIMIT 1'
+            )
+            .get(itemId)
         : null;
-      const scanMs = (row?.lowest_price != null) ? getRuleForPrice(row.lowest_price).scanMs : REENQUEUE_DELAY_MS;
+      const scanMs = row?.lowest_price != null ? getRuleForPrice(row.lowest_price).scanMs : REENQUEUE_DELAY_MS;
       const elapsedMs = (nowSec - (row?.last ?? 0)) * 1000;
       if (elapsedMs >= scanMs) {
         enqueuePrice(item);
@@ -178,10 +193,7 @@ function startQueues() {
     }
   }
 
-  logger.info(
-    { inventoryQueue: inventoryQueue.size, priceQueue: priceQueue.size },
-    'Queue workers started'
-  );
+  logger.info({ inventoryQueue: inventoryQueue.size, priceQueue: priceQueue.size }, 'Queue workers started');
 
   inventoryWorker().catch((err) => logger.fatal({ err }, 'Inventory worker crashed'));
   priceWorker().catch((err) => logger.fatal({ err }, 'Price worker crashed'));
@@ -194,7 +206,20 @@ function getQueueState() {
   };
 }
 
-function isInventoryQueued(steam64id) { return inventoryQueue.has(steam64id) || processingInventory.has(steam64id); }
-function isPriceQueued(itemName) { return priceQueue.has(itemName); }
+function isInventoryQueued(steam64id) {
+  return inventoryQueue.has(steam64id) || processingInventory.has(steam64id);
+}
+function isPriceQueued(itemName) {
+  return priceQueue.has(itemName);
+}
 
-module.exports = { enqueueInventory, enqueueInventoryIfDue, enqueuePrice, enqueuePriceIfDue, startQueues, getQueueState, isInventoryQueued, isPriceQueued };
+module.exports = {
+  enqueueInventory,
+  enqueueInventoryIfDue,
+  enqueuePrice,
+  enqueuePriceIfDue,
+  startQueues,
+  getQueueState,
+  isInventoryQueued,
+  isPriceQueued,
+};

@@ -1,6 +1,12 @@
-"use strict";
+'use strict';
 
-const { STEAM_APP_ID: APP_ID, STEAM_INVENTORY_URL, STEAM_PRICE_URL, INVENTORY_RATE_LIMIT_MS, STEAM_CURRENCY } = require("./appConfig");
+const {
+  STEAM_APP_ID: APP_ID,
+  STEAM_INVENTORY_URL,
+  STEAM_PRICE_URL,
+  INVENTORY_RATE_LIMIT_MS,
+  STEAM_CURRENCY,
+} = require('./appConfig');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -8,17 +14,17 @@ function sleep(ms) {
 
 function parsePrice(str) {
   if (!str) return null;
-  const cleaned = str.replace(/[^0-9.]/g, "");
+  const cleaned = str.replace(/[^0-9.]/g, '');
   const val = parseFloat(cleaned);
   return isNaN(val) ? null : val;
 }
 
 function buildHeaders() {
   const headers = {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    Accept: "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9"
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
   };
 
   // Steam session cookies — required for inventory access.
@@ -35,13 +41,13 @@ function buildHeaders() {
 
 async function fetchInventory(steam64id) {
   const headers = buildHeaders();
-  headers["Referer"] = `https://steamcommunity.com/profiles/${steam64id}/inventory/`;
+  headers['Referer'] = `https://steamcommunity.com/profiles/${steam64id}/inventory/`;
 
   const descriptions = [];
-  let cursor = "";
+  let cursor = '';
 
   while (true) {
-    const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=100${cursor ? `&start_assetid=${cursor}` : ""}`;
+    const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=100${cursor ? `&start_assetid=${cursor}` : ''}`;
     const res = await fetch(url, { headers });
 
     if (res.status === 400 || res.status === 403) {
@@ -90,7 +96,7 @@ async function fetchPrice(marketHashName) {
   return {
     lowest_price: parsePrice(data.lowest_price),
     median_price: parsePrice(data.median_price),
-    volume: data.volume ? parseInt(data.volume.replace(/,/g, ""), 10) : null
+    volume: data.volume ? parseInt(data.volume.replace(/,/g, ''), 10) : null,
   };
 }
 

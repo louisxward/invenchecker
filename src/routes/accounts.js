@@ -1,14 +1,14 @@
-"use strict";
+'use strict';
 
-const crypto = require("crypto");
-const express = require("express");
+const crypto = require('crypto');
+const express = require('express');
 const router = express.Router();
-const { readConfig, writeConfig } = require("../config");
-const { fetchInventory } = require("../steam");
-const db = require("../db");
-const logger = require("../logger");
-const { enqueueInventoryIfDue, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require("../queue");
-const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require("../appConfig");
+const { readConfig, writeConfig } = require('../config');
+const { fetchInventory } = require('../steam');
+const db = require('../db');
+const logger = require('../logger');
+const { enqueueInventoryIfDue, enqueuePrice, isInventoryQueued, isPriceQueued, getQueueState } = require('../queue');
+const { MAX_STEAM64IDS, MAX_CUSTOM_ITEMS, REENQUEUE_DELAY_MS } = require('../appConfig');
 
 function getAccount(uid) {
   const accounts = readConfig();
@@ -25,22 +25,22 @@ function getBadEntryReason(type, value) {
 }
 
 // GET /accounts
-router.get("/", (req, res) => {
+router.get('/', (req, res) => {
   const accounts = readConfig();
   res.json(accounts);
 });
 
 // POST /accounts
-router.post("/", (req, res) => {
+router.post('/', (req, res) => {
   const { friendlyName, discordId, steam64ids, customItems = [] } = req.body;
 
   if (!friendlyName || !discordId || !Array.isArray(steam64ids) || steam64ids.length === 0) {
-    return res.status(400).json({ error: "friendlyName, discordId, and steam64ids[] are required" });
+    return res.status(400).json({ error: 'friendlyName, discordId, and steam64ids[] are required' });
   }
   if (steam64ids.length > MAX_STEAM64IDS) {
     return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
   }
-  const invalidId = steam64ids.find(id => !isValidSteam64id(id));
+  const invalidId = steam64ids.find((id) => !isValidSteam64id(id));
   if (invalidId) {
     return res.status(400).json({ error: `Invalid steam64id: ${invalidId}` });
   }
@@ -58,10 +58,10 @@ router.post("/", (req, res) => {
 
   const accounts = readConfig();
   if (accounts.find((a) => a.discordId === discordId)) {
-    return res.status(409).json({ error: "Account with this discordId already exists" });
+    return res.status(409).json({ error: 'Account with this discordId already exists' });
   }
 
-  const uid = crypto.randomBytes(8).toString("hex");
+  const uid = crypto.randomBytes(8).toString('hex');
   const account = { uid, friendlyName, discordId, steam64ids, customItems };
   accounts.push(account);
   writeConfig(accounts);
@@ -69,52 +69,52 @@ router.post("/", (req, res) => {
   for (const id of steam64ids) enqueueInventoryIfDue(id);
   for (const item of customItems) enqueuePrice(item);
 
-  logger.info({ uid, friendlyName, discordId }, "Account added");
+  logger.info({ uid, friendlyName, discordId }, 'Account added');
   res.status(201).json(account);
 });
 
 // POST /accounts/discord — create account via Discord, return uid
 // If discordId already exists, returns 409 with the existing uid
-router.post("/discord", (req, res) => {
+router.post('/discord', (req, res) => {
   const { discordId, friendlyName } = req.body;
 
   if (!discordId) {
-    return res.status(400).json({ error: "discordId is required" });
+    return res.status(400).json({ error: 'discordId is required' });
   }
 
   const accounts = readConfig();
   const existing = accounts.find((a) => a.discordId === discordId);
   if (existing) {
-    return res.status(409).json({ error: "Account with this discordId already exists" });
+    return res.status(409).json({ error: 'Account with this discordId already exists' });
   }
 
-  const uid = crypto.randomBytes(8).toString("hex");
+  const uid = crypto.randomBytes(8).toString('hex');
   const account = { uid, friendlyName: friendlyName || null, discordId, steam64ids: [], customItems: [] };
   accounts.push(account);
   writeConfig(accounts);
 
-  logger.info({ uid, discordId }, "Account created via Discord");
+  logger.info({ uid, discordId }, 'Account created via Discord');
   res.status(201).json({ uid });
 });
 
 // GET /accounts/:uid
-router.get("/:uid", (req, res) => {
+router.get('/:uid', (req, res) => {
   const { account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
   res.json(account);
 });
 
 // PUT /accounts/:uid
-router.put("/:uid", (req, res) => {
+router.put('/:uid', (req, res) => {
   const { accounts, account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const idx = accounts.findIndex((a) => a.uid === req.params.uid);
   if (req.body.steam64ids !== undefined && req.body.steam64ids.length > MAX_STEAM64IDS) {
     return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
   }
   if (req.body.steam64ids !== undefined) {
-    const invalidId = req.body.steam64ids.find(id => !isValidSteam64id(id));
+    const invalidId = req.body.steam64ids.find((id) => !isValidSteam64id(id));
     if (invalidId) return res.status(400).json({ error: `Invalid steam64id: ${invalidId}` });
   }
   if (req.body.customItems !== undefined && req.body.customItems.length > MAX_CUSTOM_ITEMS) {
@@ -149,29 +149,30 @@ router.put("/:uid", (req, res) => {
 });
 
 // DELETE /accounts/:uid
-router.delete("/:uid", (req, res) => {
+router.delete('/:uid', (req, res) => {
   const { accounts, account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const idx = accounts.findIndex((a) => a.uid === req.params.uid);
   accounts.splice(idx, 1);
   writeConfig(accounts);
 
-  logger.info({ uid: account.uid, friendlyName: account.friendlyName }, "Account deleted");
+  logger.info({ uid: account.uid, friendlyName: account.friendlyName }, 'Account deleted');
   res.status(204).send();
 });
 
 // POST /accounts/:uid/steam64ids — add a steam64id (no-op if already present)
-router.post("/:uid/steam64ids", (req, res) => {
+router.post('/:uid/steam64ids', (req, res) => {
   const { accounts, account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
   const { steam64id } = req.body;
-  if (!steam64id) return res.status(400).json({ error: "steam64id is required" });
+  if (!steam64id) return res.status(400).json({ error: 'steam64id is required' });
   if (!isValidSteam64id(steam64id)) return res.status(400).json({ error: `Invalid steam64id: ${steam64id}` });
   const badIdReason = getBadEntryReason('steam64id', steam64id);
-  if (badIdReason) return res.status(400).json({ error: `steam64id ${steam64id} was previously rejected: ${badIdReason}` });
+  if (badIdReason)
+    return res.status(400).json({ error: `steam64id ${steam64id} was previously rejected: ${badIdReason}` });
 
-  const idx = accounts.findIndex(a => a.uid === req.params.uid);
+  const idx = accounts.findIndex((a) => a.uid === req.params.uid);
   if (!accounts[idx].steam64ids.includes(steam64id)) {
     if (accounts[idx].steam64ids.length >= MAX_STEAM64IDS) {
       return res.status(400).json({ error: `Too many steam64ids (max ${MAX_STEAM64IDS})` });
@@ -184,13 +185,13 @@ router.post("/:uid/steam64ids", (req, res) => {
 });
 
 // DELETE /accounts/:uid/steam64ids/:id — remove a steam64id
-router.delete("/:uid/steam64ids/:id", (req, res) => {
+router.delete('/:uid/steam64ids/:id', (req, res) => {
   const { accounts, account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  const idx = accounts.findIndex(a => a.uid === req.params.uid);
+  const idx = accounts.findIndex((a) => a.uid === req.params.uid);
   const pos = accounts[idx].steam64ids.indexOf(req.params.id);
-  if (pos === -1) return res.status(404).json({ error: "steam64id not found on account" });
+  if (pos === -1) return res.status(404).json({ error: 'steam64id not found on account' });
 
   accounts[idx].steam64ids.splice(pos, 1);
   writeConfig(accounts);
@@ -198,15 +199,15 @@ router.delete("/:uid/steam64ids/:id", (req, res) => {
 });
 
 // POST /accounts/:uid/customItems — add a custom item (no-op if already present)
-router.post("/:uid/customItems", (req, res) => {
+router.post('/:uid/customItems', (req, res) => {
   const { accounts, account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
   const { item } = req.body;
-  if (!item) return res.status(400).json({ error: "item is required" });
+  if (!item) return res.status(400).json({ error: 'item is required' });
   const badItemReason = getBadEntryReason('item', item);
   if (badItemReason) return res.status(400).json({ error: `item "${item}" was previously rejected: ${badItemReason}` });
 
-  const idx = accounts.findIndex(a => a.uid === req.params.uid);
+  const idx = accounts.findIndex((a) => a.uid === req.params.uid);
   if (!accounts[idx].customItems.includes(item)) {
     if (accounts[idx].customItems.length >= MAX_CUSTOM_ITEMS) {
       return res.status(400).json({ error: `Too many customItems (max ${MAX_CUSTOM_ITEMS})` });
@@ -219,14 +220,14 @@ router.post("/:uid/customItems", (req, res) => {
 });
 
 // DELETE /accounts/:uid/customItems/:item — remove a custom item
-router.delete("/:uid/customItems/:item", (req, res) => {
+router.delete('/:uid/customItems/:item', (req, res) => {
   const { accounts, account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  const idx = accounts.findIndex(a => a.uid === req.params.uid);
+  const idx = accounts.findIndex((a) => a.uid === req.params.uid);
   const item = decodeURIComponent(req.params.item);
   const pos = accounts[idx].customItems.indexOf(item);
-  if (pos === -1) return res.status(404).json({ error: "item not found on account" });
+  if (pos === -1) return res.status(404).json({ error: 'item not found on account' });
 
   accounts[idx].customItems.splice(pos, 1);
   writeConfig(accounts);
@@ -234,24 +235,24 @@ router.delete("/:uid/customItems/:item", (req, res) => {
 });
 
 // GET /accounts/:uid/inventory — live passthrough to Steam, all steam64ids merged
-router.get("/:uid/inventory", async (req, res) => {
+router.get('/:uid/inventory', async (req, res) => {
   const { account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
   try {
     const results = await Promise.all(account.steam64ids.map((id) => fetchInventory(id)));
     const items = results.flat();
     res.json({ uid: account.uid, count: items.length, items });
   } catch (err) {
-    logger.error({ err, uid: account.uid }, "Failed to fetch inventory");
+    logger.error({ err, uid: account.uid }, 'Failed to fetch inventory');
     res.status(502).json({ error: err.message });
   }
 });
 
 // GET /accounts/:uid/summary — inventory items per steam64id + custom items, each with latest price
-router.get("/:uid/summary", (req, res) => {
+router.get('/:uid/summary', (req, res) => {
   const { account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const latestPrice = db.prepare(`
     SELECT ps.lowest_price, ps.median_price, ps.volume, ps.captured_at
@@ -271,9 +272,9 @@ router.get("/:uid/summary", (req, res) => {
   `);
 
   const steam64ids = {};
-  for (const id of (account.steam64ids || [])) {
+  for (const id of account.steam64ids || []) {
     const rows = invQuery.all(id);
-    steam64ids[id] = rows.map(r => ({
+    steam64ids[id] = rows.map((r) => ({
       market_hash_name: r.market_hash_name,
       first_seen: r.first_seen,
       last_seen: r.last_seen,
@@ -283,7 +284,7 @@ router.get("/:uid/summary", (req, res) => {
   }
 
   // Custom items with latest price
-  const customItems = (account.customItems || []).map(name => ({
+  const customItems = (account.customItems || []).map((name) => ({
     market_hash_name: name,
     price: latestPrice.get(name) ?? null,
   }));
@@ -292,9 +293,9 @@ router.get("/:uid/summary", (req, res) => {
 });
 
 // GET /accounts/:uid/progress — scan state per steam64id and custom item
-router.get("/:uid/progress", (req, res) => {
+router.get('/:uid/progress', (req, res) => {
   const { account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const reenqueueDelaySecs = Math.floor(REENQUEUE_DELAY_MS / 1000);
 
@@ -307,13 +308,13 @@ router.get("/:uid/progress", (req, res) => {
   `);
 
   const steam64ids = {};
-  for (const id of (account.steam64ids || [])) {
+  for (const id of account.steam64ids || []) {
     const queued = isInventoryQueued(id);
     const lastFetch = lastFetchStmt.get(id) ?? null;
     steam64ids[id] = {
       queued,
       lastFetch,
-      nextScanAt: (!queued && lastFetch) ? lastFetch.fetched_at + reenqueueDelaySecs : null,
+      nextScanAt: !queued && lastFetch ? lastFetch.fetched_at + reenqueueDelaySecs : null,
     };
   }
 
@@ -326,13 +327,13 @@ router.get("/:uid/progress", (req, res) => {
   `);
 
   const customItems = {};
-  for (const name of (account.customItems || [])) {
+  for (const name of account.customItems || []) {
     const queued = isPriceQueued(name);
     const lastPrice = lastPriceStmt.get(name) ?? null;
     customItems[name] = {
       queued,
       lastPrice,
-      nextScanAt: (!queued && lastPrice) ? lastPrice.captured_at + reenqueueDelaySecs : null,
+      nextScanAt: !queued && lastPrice ? lastPrice.captured_at + reenqueueDelaySecs : null,
     };
   }
 
@@ -341,11 +342,11 @@ router.get("/:uid/progress", (req, res) => {
 });
 
 // GET /accounts/:uid/prices
-router.get("/:uid/prices", (req, res) => {
+router.get('/:uid/prices', (req, res) => {
   const { account } = getAccount(req.params.uid);
-  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  const days = parseInt(req.query.days ?? "7", 10);
+  const days = parseInt(req.query.days ?? '7', 10);
   const since = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
   const itemFilter = req.query.item;
 
@@ -353,7 +354,7 @@ router.get("/:uid/prices", (req, res) => {
 
   if (items.length === 0) return res.json({});
 
-  const placeholders = items.map(() => "?").join(", ");
+  const placeholders = items.map(() => '?').join(', ');
   const snapshots = db
     .prepare(
       `
@@ -373,7 +374,7 @@ router.get("/:uid/prices", (req, res) => {
       lowest_price: s.lowest_price,
       median_price: s.median_price,
       volume: s.volume,
-      captured_at: s.captured_at
+      captured_at: s.captured_at,
     });
   }
 

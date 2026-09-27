@@ -22,12 +22,14 @@ describe('Alerts routes', () => {
   function insertAlert(itemName, uid) {
     const itemId = db.getOrCreateItemId(itemName);
     const now = Math.floor(Date.now() / 1000);
-    const alertId = db.prepare(
-      'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(itemId, 20.0, 12.0, 10.0, now).lastInsertRowid;
-    const recipientId = db.prepare(
-      'INSERT INTO alert_recipients (alert_id, uid) VALUES (?, ?)'
-    ).run(alertId, uid).lastInsertRowid;
+    const alertId = db
+      .prepare(
+        'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(itemId, 20.0, 12.0, 10.0, now).lastInsertRowid;
+    const recipientId = db
+      .prepare('INSERT INTO alert_recipients (alert_id, uid) VALUES (?, ?)')
+      .run(alertId, uid).lastInsertRowid;
     return { alertId, recipientId };
   }
 
