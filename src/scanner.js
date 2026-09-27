@@ -53,6 +53,18 @@ function getUidsForItem(itemId) {
   return uids;
 }
 
+function isSteam64idTracked(steam64id) {
+  return readConfig().some((account) => (account.steam64ids || []).includes(steam64id));
+}
+
+// An item is tracked while an account lists it as a custom item, or it is in (not missing from)
+// the inventory of a steam64id an account lists
+function isItemTracked(itemName) {
+  const itemId = db.prepare('SELECT id FROM item_names WHERE name = ?').get(itemName)?.id;
+  if (itemId) return getUidsForItem(itemId).size > 0;
+  return readConfig().some((account) => (account.customItems || []).includes(itemName));
+}
+
 // Fetch inventory for one steam64id, upsert to DB, enqueue found items for pricing
 async function processInventoryForSteamId(steam64id, enqueuePrice) {
   if (db.getBadEntries('steam64id').includes(steam64id)) {
@@ -233,4 +245,11 @@ async function runScan(force = false) {
   logger.info({ force }, 'Scan triggered: items enqueued');
 }
 
-module.exports = { runScan, scanState, processInventoryForSteamId, processPriceForItem };
+module.exports = {
+  runScan,
+  scanState,
+  processInventoryForSteamId,
+  processPriceForItem,
+  isSteam64idTracked,
+  isItemTracked,
+};

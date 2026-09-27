@@ -11,7 +11,7 @@ const {
   QUEUE_WARN_SIZE,
   RATE_LIMIT_RETRY_MS,
 } = require('./appConfig');
-const { processInventoryForSteamId, processPriceForItem } = require('./scanner');
+const { processInventoryForSteamId, processPriceForItem, isSteam64idTracked, isItemTracked } = require('./scanner');
 const { getRuleForPrice } = require('./rules');
 const db = require('./db');
 
@@ -77,6 +77,24 @@ function enqueueInventoryIfDue(steam64id) {
   enqueueInventory(steam64id);
 }
 
+// Retries and scheduled re-scans only continue while an account still tracks the entry, so a
+// deleted account or a sold item drops out of rotation, as it would on a restart
+function requeueInventory(steam64id, enqueue = enqueueInventory) {
+  if (!isSteam64idTracked(steam64id)) {
+    logger.info({ steam64id }, 'steam64id no longer tracked, dropping from rotation');
+    return;
+  }
+  enqueue(steam64id);
+}
+
+function requeuePrice(itemName) {
+  if (!isItemTracked(itemName)) {
+    logger.info({ itemName }, 'Item no longer tracked, dropping from rotation');
+    return;
+  }
+  enqueuePrice(itemName);
+}
+
 async function inventoryWorker() {
   let wasActive = false;
   while (true) {
@@ -109,10 +127,10 @@ async function inventoryWorker() {
         'Inventory fetch failed, pausing before retry'
       );
       await sleep(RATE_LIMIT_RETRY_MS);
-      enqueueInventoryIfDue(steam64id);
+      requeueInventory(steam64id, enqueueInventoryIfDue);
     } else {
       await sleep(INVENTORY_RATE_LIMIT_MS);
-      setTimeout(() => enqueueInventory(steam64id), REENQUEUE_DELAY_MS);
+      setTimeout(() => requeueInventory(steam64id), REENQUEUE_DELAY_MS);
     }
   }
 }
@@ -143,11 +161,11 @@ async function priceWorker() {
     if (result === 'rate_limited' || result === 'retry') {
       logger.info({ itemName, result, retryInMs: RATE_LIMIT_RETRY_MS }, 'Price fetch failed, pausing before retry');
       await sleep(RATE_LIMIT_RETRY_MS);
-      enqueuePrice(itemName);
+      requeuePrice(itemName);
     } else {
       const delayMs = result?.scanMs ?? REENQUEUE_DELAY_MS;
       await sleep(PRICE_RATE_LIMIT_MS);
-      setTimeout(() => enqueuePrice(itemName), delayMs);
+      setTimeout(() => requeuePrice(itemName), delayMs);
     }
   }
 }
@@ -170,7 +188,7 @@ function startQueues() {
         enqueueInventory(steam64id);
       } else {
         const resumeInMs = REENQUEUE_DELAY_MS - elapsedMs;
-        setTimeout(() => enqueueInventory(steam64id), resumeInMs);
+        setTimeout(() => requeueInventory(steam64id), resumeInMs);
         logger.info({ steam64id, resumeInMs }, 'Inventory scan not yet due, scheduling');
       }
     }
@@ -190,7 +208,7 @@ function startQueues() {
         enqueuePrice(item);
       } else {
         const resumeInMs = scanMs - elapsedMs;
-        setTimeout(() => enqueuePrice(item), resumeInMs);
+        setTimeout(() => requeuePrice(item), resumeInMs);
         logger.info({ item, resumeInMs }, 'Price scan not yet due, scheduling');
       }
     }
@@ -217,6 +235,8 @@ function isPriceQueued(itemName) {
 }
 
 module.exports = {
+  requeueInventory,
+  requeuePrice,
   enqueueInventory,
   enqueueInventoryIfDue,
   enqueuePrice,
