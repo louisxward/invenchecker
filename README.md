@@ -34,8 +34,6 @@ All state lives in the data directory: `/opt/data/invenchecker` on the Docker ho
 
 Accounts are stored in the database and managed through the Accounts endpoints below. Each has a `uid`, `friendlyName`, `discordId`, `steam64ids[]` and `customItems[]`.
 
-**Upgrading from `accounts.json`:** accounts used to live in `accounts.json` in the data directory. The first start of this version imports that file into the database, once, and it isn't read again (a warning is logged at startup while it still exists, so delete it once you've checked the accounts with `GET /accounts`). If the file is malformed (not valid JSON, an entry without a `uid`, a repeated `uid`, or fields of the wrong type), startup stops with an error naming the entry and the database is left unchanged; fix the file and start again.
-
 > **Note:** `customItems` values must match the Steam `market_hash_name` exactly (case-sensitive).
 
 > **Note:** `steam64ids` must be valid Steam64 IDs (17 digits, starting with `7656119`). If a steam64id or custom item was previously rejected by the scanner it cannot be re-added via the API (returns 400 with reason).
@@ -166,7 +164,6 @@ Alerts are exposed via `GET /alerts` for polling.
 | ------------------------- | ---------------------------- | -------- | ----------------------------------------------------------------------------- |
 | `PORT`                    | `33001`                      | No       | Port the server listens on                                                    |
 | `DB_PATH`                 | `<DATA_DIR>/invenchecker.db` | No       | Path to the SQLite database file                                              |
-| `CONFIG_PATH`             | `<DATA_DIR>/accounts.json`   | No       | Legacy accounts file, imported once on upgrade (see Accounts)                 |
 | `LOG_LEVEL`               | `info`                       | No       | Logging level                                                                 |
 | `PRICE_RATE_LIMIT_MS`     | `3000`                       | No       | Minimum milliseconds between price API requests                               |
 | `INVENTORY_RATE_LIMIT_MS` | `3000`                       | No       | Minimum milliseconds between inventory API requests                           |

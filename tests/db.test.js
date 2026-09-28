@@ -5,36 +5,22 @@ const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 
-// Fresh instances of the database module and repositories, with config's DB_PATH set to dbPath
-// (and CONFIG_PATH, the accounts.json to import, to accountsPath when given)
-function loadModules(dbPath, accountsPath) {
-  const saved = { DB_PATH: process.env.DB_PATH, CONFIG_PATH: process.env.CONFIG_PATH };
+// Fresh instances of the database module, migrations and repositories, with config's DB_PATH set to dbPath
+function loadModules(dbPath) {
+  const saved = process.env.DB_PATH;
   process.env.DB_PATH = dbPath;
-  if (accountsPath) process.env.CONFIG_PATH = accountsPath;
   const modules = {};
   try {
     jest.isolateModules(() => {
       modules.database = require('../src/database');
+      modules.migrations = require('../src/database/migrations');
       modules.itemNames = require('../src/repositories/itemNames');
       modules.badEntries = require('../src/repositories/badEntries');
-      modules.accounts = require('../src/repositories/accounts');
     });
   } finally {
-    Object.assign(process.env, saved);
+    process.env.DB_PATH = saved;
   }
   return modules;
-}
-
-// Runs init() against a real file, as on startup. Returns the connection, with the repositories
-// from the same module instance attached for convenience.
-function openDb(dbPath) {
-  const { database, itemNames, badEntries } = loadModules(dbPath);
-  database.init();
-  return Object.assign(database.getDb(), { itemNames, badEntries });
-}
-
-function columns(db, table) {
-  return db.pragma(`table_info(${table})`).map((c) => c.name);
 }
 
 function tables(db) {
@@ -45,26 +31,7 @@ function tables(db) {
     .sort();
 }
 
-// The schema before item_names existed: TEXT item names and resolved columns on alerts
-function createLegacyDb(dbPath) {
-  const raw = new Database(dbPath);
-  raw.exec(`
-    CREATE TABLE price_snapshots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, market_hash_name TEXT NOT NULL,
-      lowest_price REAL, median_price REAL, volume INTEGER, captured_at INTEGER NOT NULL
-    );
-    CREATE TABLE alerts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, market_hash_name TEXT NOT NULL, spike_pct REAL NOT NULL,
-      price_at_alert REAL NOT NULL, seven_day_low REAL NOT NULL, created_at INTEGER NOT NULL,
-      resolved INTEGER NOT NULL DEFAULT 0, resolved_at INTEGER
-    );
-    INSERT INTO price_snapshots (market_hash_name, lowest_price, median_price, volume, captured_at)
-      VALUES ('Item A', 1.5, 1.6, 10, 100), ('Item A', 2.0, 2.1, 11, 200), ('Item B', 5.0, 5.5, 3, 150);
-    INSERT INTO alerts (market_hash_name, spike_pct, price_at_alert, seven_day_low, created_at, resolved)
-      VALUES ('Item A', 33.3, 2.0, 1.5, 200, 1);
-  `);
-  return raw;
-}
+const version = (db) => db.pragma('user_version', { simple: true });
 
 describe('database module', () => {
   it('getDb throws before init', () => {
@@ -88,7 +55,13 @@ describe('database module', () => {
 describe('database migrations', () => {
   let dir;
   let dbPath;
-  let db;
+  let modules;
+
+  function open() {
+    modules = loadModules(dbPath);
+    modules.database.init();
+    return modules;
+  }
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invenchecker-db-'));
@@ -96,13 +69,14 @@ describe('database migrations', () => {
   });
 
   afterEach(() => {
-    if (db?.open) db.close();
-    db = undefined;
+    modules?.database.close();
+    modules = undefined;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('creates the full schema on a fresh database', () => {
-    db = openDb(dbPath);
+  it('creates the full schema on a fresh database, at the baseline version', () => {
+    const { database, migrations } = open();
+    const db = database.getDb();
     expect(tables(db)).toEqual([
       'account_custom_items',
       'account_steam64ids',
@@ -115,203 +89,91 @@ describe('database migrations', () => {
       'item_names',
       'price_snapshots',
     ]);
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
-    expect(columns(db, 'price_snapshots')).toContain('item_id');
-    expect(columns(db, 'alerts')).not.toContain('resolved');
+    expect(version(db)).toBe(migrations.BASELINE_VERSION + migrations.MIGRATIONS.length);
     expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
   });
 
   it('is safe to run twice and keeps existing data', () => {
-    db = openDb(dbPath);
-    const itemId = db.itemNames.getOrCreateItemId('Item A');
-    db.prepare('INSERT INTO price_snapshots (item_id, lowest_price, captured_at) VALUES (?, ?, ?)').run(itemId, 1, 1);
-    db.badEntries.markBad('item', 'Bad', 'reason');
-    db.close();
+    const first = open();
+    const itemId = first.itemNames.getOrCreateItemId('Item A');
+    first.database
+      .getDb()
+      .prepare('INSERT INTO price_snapshots (item_id, lowest_price, captured_at) VALUES (?, ?, ?)')
+      .run(itemId, 1, 1);
+    first.badEntries.markBad('item', 'Bad', 'reason');
+    first.database.close();
 
-    db = openDb(dbPath);
-    expect(db.prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(1);
-    expect(db.badEntries.isBad('item', 'Bad')).toBe(true);
+    const { database, badEntries, itemNames } = open();
+    expect(database.getDb().prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(1);
+    expect(badEntries.isBad('item', 'Bad')).toBe(true);
     // The name cache follows the connection, so ids still match the reopened database
-    expect(db.itemNames.getOrCreateItemId('Item A')).toBe(itemId);
+    expect(itemNames.getOrCreateItemId('Item A')).toBe(itemId);
   });
 
-  it('migrates the legacy TEXT schema to item_names ids', () => {
-    createLegacyDb(dbPath).close();
-
-    db = openDb(dbPath);
-    expect(columns(db, 'price_snapshots')).not.toContain('market_hash_name');
-    expect(columns(db, 'alerts')).not.toContain('resolved');
-    const snapshots = db
-      .prepare(
-        'SELECT n.name, ps.lowest_price FROM price_snapshots ps JOIN item_names n ON n.id = ps.item_id ORDER BY ps.id'
-      )
-      .all();
-    expect(snapshots).toEqual([
-      { name: 'Item A', lowest_price: 1.5 },
-      { name: 'Item A', lowest_price: 2.0 },
-      { name: 'Item B', lowest_price: 5.0 },
-    ]);
-    const alert = db
-      .prepare('SELECT n.name, a.price_at_alert FROM alerts a JOIN item_names n ON n.id = a.item_id')
-      .get();
-    expect(alert).toEqual({ name: 'Item A', price_at_alert: 2.0 });
-    expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
+  it('applies migrations added after the baseline, in order', () => {
+    open().database.close();
+    const { database, migrations } = loadModules(dbPath);
+    const applied = [];
+    migrations.MIGRATIONS.push(
+      () => applied.push('a'),
+      (db) => {
+        applied.push('b');
+        db.exec('CREATE TABLE extra (x INTEGER)');
+      }
+    );
+    modules = { database };
+    database.init();
+    expect(applied).toEqual(['a', 'b']);
+    expect(version(database.getDb())).toBe(migrations.BASELINE_VERSION + 2);
+    expect(tables(database.getDb())).toContain('extra');
   });
 
-  it('rolls back everything when a migration step fails', () => {
-    const raw = createLegacyDb(dbPath);
-    // A leftover table makes the alerts step fail after price_snapshots has been migrated
-    raw.exec('CREATE TABLE alerts_new (x INTEGER)');
-    raw.close();
-
-    const { database } = loadModules(dbPath);
-    expect(() => database.init()).toThrow(/alerts_new already exists/);
+  it('rolls back a migration that fails, leaving the version unchanged', () => {
+    open().database.close();
+    const { database, migrations } = loadModules(dbPath);
+    migrations.MIGRATIONS.push((db) => {
+      db.exec('CREATE TABLE half_done (x INTEGER)');
+      throw new Error('migration failed');
+    });
+    expect(() => database.init()).toThrow('migration failed');
     expect(() => database.getDb()).toThrow('not initialised');
 
     const check = new Database(dbPath, { readonly: true });
     try {
-      expect(columns(check, 'price_snapshots')).toContain('market_hash_name');
-      expect(check.prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(3);
-      expect(tables(check)).not.toContain('item_names');
+      expect(version(check)).toBe(migrations.BASELINE_VERSION);
+      expect(tables(check)).not.toContain('half_done');
     } finally {
       check.close();
     }
   });
-});
 
-describe('accounts.json import (migration 2)', () => {
-  let dir;
-  let dbPath;
-  let accountsPath;
-  let modules;
-
-  const writeAccountsFile = (content) =>
-    fs.writeFileSync(accountsPath, typeof content === 'string' ? content : JSON.stringify(content));
-
-  function open() {
-    modules = loadModules(dbPath, accountsPath);
-    modules.database.init();
-    return modules;
-  }
-
-  beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invenchecker-import-'));
-    dbPath = path.join(dir, 'test.db');
-    accountsPath = path.join(dir, 'accounts.json');
-  });
-
-  afterEach(() => {
-    modules?.database.close();
-    modules = undefined;
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('imports every account, keeping order, list order and repeats', () => {
-    writeAccountsFile([
-      { uid: 'b', friendlyName: 'Bee', discordId: '2', steam64ids: ['76561198000000002', '76561198000000001'] },
-      { uid: 'a', discordId: '1', customItems: ['Z', 'A', 'Z'] },
-      { uid: 'bare' },
-    ]);
-    const { accounts } = open();
-    expect(accounts.listAccounts()).toEqual([
-      {
-        uid: 'b',
-        friendlyName: 'Bee',
-        discordId: '2',
-        steam64ids: ['76561198000000002', '76561198000000001'],
-        customItems: [],
-      },
-      { uid: 'a', friendlyName: null, discordId: '1', steam64ids: [], customItems: ['Z', 'A', 'Z'] },
-      { uid: 'bare', friendlyName: null, discordId: null, steam64ids: [], customItems: [] },
-    ]);
-  });
-
-  it('imports into a database created before accounts moved (user_version 0)', () => {
-    const raw = createLegacyDb(dbPath);
+  it('rolls back a schema creation that fails part-way', () => {
+    // A view named like one of the later tables makes CREATE TABLE accounts fail after earlier tables exist
+    const raw = new Database(dbPath);
+    raw.exec('CREATE VIEW accounts AS SELECT 1 AS x');
     raw.close();
-    writeAccountsFile([{ uid: 'a', steam64ids: ['76561198000000001'] }]);
-    const { accounts, database } = open();
-    expect(accounts.getAccount('a').steam64ids).toEqual(['76561198000000001']);
-    expect(database.getDb().prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(3);
-  });
 
-  it('only imports once', () => {
-    writeAccountsFile([{ uid: 'a' }]);
-    open().database.close();
-    writeAccountsFile([{ uid: 'a' }, { uid: 'b' }]);
-    expect(
-      open()
-        .accounts.listAccounts()
-        .map((a) => a.uid)
-    ).toEqual(['a']);
-  });
+    const { database } = loadModules(dbPath);
+    expect(() => database.init()).toThrow(/accounts/);
 
-  it('starts with no accounts when there is no accounts.json', () => {
-    expect(open().accounts.listAccounts()).toEqual([]);
-  });
-
-  it.each([
-    ['invalid JSON', '[{', /Failed to import/],
-    ['not an array', '{}', /not a JSON array/],
-    ['an entry without a uid', [{ friendlyName: 'x' }], /entry 0 has no uid/],
-    ['a repeated uid', [{ uid: 'a' }, { uid: 'a' }], /entry 1 repeats uid a/],
-    ['a non-string list entry', [{ uid: 'a', steam64ids: [12345] }], /steam64ids must be an array of strings/],
-  ])('refuses to start on %s, leaving the database untouched', (_label, content, message) => {
-    writeAccountsFile(content);
-    const { database } = loadModules(dbPath, accountsPath);
-    expect(() => database.init()).toThrow(message);
     const check = new Database(dbPath, { readonly: true });
     try {
-      expect(check.pragma('user_version', { simple: true })).toBe(0);
+      expect(version(check)).toBe(0);
       expect(tables(check)).toEqual([]);
     } finally {
       check.close();
     }
   });
-});
 
-describe('clearing transient bad entries (migration 3)', () => {
-  it('removes rows older versions wrote for temporary failures and keeps the rest', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invenchecker-bad-'));
-    const dbPath = path.join(dir, 'test.db');
-    try {
-      // A database at version 2, with bad entries from the old error handling
-      const { database: v2 } = loadModules(dbPath);
-      v2.init();
-      const raw = v2.getDb();
-      raw.pragma('user_version = 2');
-      const add = raw.prepare('INSERT INTO bad_entries (type, value, reason, added_at) VALUES (?, ?, ?, 1)');
-      const transient = [
-        ['item', 'A', 'Steam returned no price data (success=false)'],
-        ['item', 'B', 'fetch failed'],
-        ['item', 'C', 'The operation was aborted due to timeout'],
-        ['item', 'D', 'Failed to fetch price for "D": HTTP 500'],
-        ['item', 'E', 'Failed to fetch price for "E": HTTP 503'],
-        ['steam64id', '76561198087314132', 'Failed to fetch inventory for 76561198087314132: HTTP 500'],
-        ['item', 'F', 'Unexpected token \'<\', "<html>" is not valid JSON'],
-        ['item', 'G', "Cannot read properties of null (reading 'success')"],
-      ];
-      const kept = [
-        ['steam64id', '765611980873141444', 'Failed to fetch inventory for 765611980873141444: HTTP 404'],
-        ['steam64id', '76561198000000001', 'Cannot access inventory for 76561198000000001'],
-        ['item', 'H', 'Failed to fetch price for "H": HTTP 400'],
-        ['item', 'I', 'Steam returned success=false (unknown market_hash_name?)'],
-      ];
-      for (const row of [...transient, ...kept]) add.run(...row);
-      v2.close();
+  it.each([
+    ['a database with tables but no version (from before versioning)', 'CREATE TABLE price_snapshots (id INTEGER)'],
+    ['a database at an older version', 'PRAGMA user_version = 2'],
+  ])('refuses to open %s, pointing at the commit that can upgrade it', (_label, sql) => {
+    const raw = new Database(dbPath);
+    raw.exec(sql);
+    raw.close();
 
-      const { database } = loadModules(dbPath);
-      database.init();
-      const left = database
-        .getDb()
-        .prepare('SELECT type, value, reason FROM bad_entries ORDER BY value')
-        .all()
-        .map((r) => [r.type, r.value, r.reason]);
-      expect(left).toEqual([...kept].sort((a, b) => a[1].localeCompare(b[1])));
-      expect(database.getDb().pragma('user_version', { simple: true })).toBe(3);
-      database.close();
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+    const { database } = loadModules(dbPath);
+    expect(() => database.init()).toThrow(/upgrade it with commit 65bea69/);
   });
 });
