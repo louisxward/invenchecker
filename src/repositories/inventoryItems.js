@@ -36,6 +36,14 @@ function listHolders(itemId) {
     .map((row) => row.steam64id);
 }
 
+// Whether the item has ever been in a tracked inventory (then it's a real market_hash_name)
+function hasBeenSeen(itemName) {
+  logger.debug('repository - hasBeenSeen');
+  return !!getDb()
+    .prepare(`SELECT 1 FROM inventory_items ii JOIN item_names n ON n.id = ii.item_id WHERE n.name = ? LIMIT 1`)
+    .get(itemName);
+}
+
 // Every item seen in the inventory, by name
 function listForSteam64id(steam64id) {
   logger.debug('repository - listForSteam64id');
@@ -50,4 +58,4 @@ function listForSteam64id(steam64id) {
     .all(steam64id);
 }
 
-module.exports = { upsertSeen, markMissingExcept, listHolders, listForSteam64id };
+module.exports = { upsertSeen, markMissingExcept, listHolders, hasBeenSeen, listForSteam64id };

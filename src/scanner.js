@@ -11,25 +11,26 @@ const inventoryItems = require('./repositories/inventoryItems');
 const itemNames = require('./repositories/itemNames');
 const priceSnapshots = require('./repositories/priceSnapshots');
 const { getRuleForPrice } = require('./rules');
-const { fetchInventory, fetchPrice, isNetworkError, isServerError } = require('./steam');
+const { fetchInventory, fetchPrice, isNetworkError, isServerError, isInvalidResponse } = require('./steam');
 
-// A Steam 5xx is retried, since it's usually an outage. It only counts towards marking the entry bad
-// when Steam has answered another request of the same kind since the entry last failed, so an
-// outage can't blacklist everything, while an entry that fails on its own is given up on.
-const SERVER_ERROR_LIMIT = 3;
-const serverErrors = { steam64id: new Map(), item: new Map() }; // value -> { count, successSeq }
+// Failures that might be Steam's fault (a 5xx; for items also success=false) are retried. One only
+// counts towards giving up on the entry when Steam has answered another request of the same kind
+// since the entry last failed, so an outage or throttling can't blacklist everything, while an entry
+// that fails on its own is given up on after FAILURE_LIMIT.
+const FAILURE_LIMIT = 3;
+const failures = { steam64id: new Map(), item: new Map() }; // value -> { count, successSeq }
 const successSeq = { steam64id: 0, item: 0 };
 
 function recordSteamSuccess(type, value) {
   successSeq[type]++;
-  serverErrors[type].delete(value);
+  failures[type].delete(value);
 }
 
-// Returns the number of 5xx responses that count against the entry
-function recordServerError(type, value) {
-  const prev = serverErrors[type].get(value);
+// Returns the number of failures that count against the entry
+function recordFailure(type, value) {
+  const prev = failures[type].get(value);
   const count = !prev ? 1 : successSeq[type] > prev.successSeq ? prev.count + 1 : prev.count;
-  serverErrors[type].set(value, { count, successSeq: successSeq[type] });
+  failures[type].set(value, { count, successSeq: successSeq[type] });
   return count;
 }
 
@@ -80,7 +81,7 @@ function isItemTracked(itemName) {
 // Fetch inventory for one steam64id, upsert to DB, enqueue found items for pricing
 async function processInventoryForSteamId(steam64id, enqueuePrice) {
   if (badEntries.isBad('steam64id', steam64id)) {
-    logger.warn({ steam64id }, 'inventory - skipping bad steam64id');
+    logger.debug({ steam64id }, 'inventory - skipping bad steam64id');
     return;
   }
 
@@ -99,13 +100,13 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
       logger.error({ err, steam64id }, 'inventory - rate limited, skipping');
       return 'rate_limited';
     }
-    if (isNetworkError(err)) {
-      logger.error({ err, steam64id }, 'inventory - network error, will retry');
+    if (isNetworkError(err) || isInvalidResponse(err)) {
+      logger.error({ err, steam64id }, 'inventory - network error or invalid response, will retry');
       return 'retry';
     }
     if (isServerError(err)) {
-      const count = recordServerError('steam64id', steam64id);
-      if (count < SERVER_ERROR_LIMIT) {
+      const count = recordFailure('steam64id', steam64id);
+      if (count < FAILURE_LIMIT) {
         logger.error({ err, steam64id, count }, 'inventory - Steam server error, will retry');
         return 'retry';
       }
@@ -123,48 +124,71 @@ async function processInventoryForSteamId(steam64id, enqueuePrice) {
     const itemId = itemNames.getOrCreateItemId(d.market_hash_name);
     inventoryItems.upsertSeen(steam64id, itemId, now);
     foundItemIds.push(itemId);
-    enqueuePrice(d.market_hash_name);
+    // Non-marketable items (medals, coins, untradeable graffiti...) have no market price
+    if (d.marketable !== 0) enqueuePrice(d.market_hash_name);
   }
 
   inventoryItems.markMissingExcept(steam64id, foundItemIds, now);
 }
 
+// Gives up on an item's price. A name seen in an inventory is a real item, so it's only skipped until
+// its next scan; any other (a custom item) is marked bad.
+function giveUpOnItem(itemName, reason) {
+  if (inventoryItems.hasBeenSeen(itemName)) {
+    logger.warn({ itemName, reason }, 'price - no price this time, will try again at the next scan');
+    return;
+  }
+  badEntries.markBad('item', itemName, reason);
+  logger.warn({ itemName, reason }, 'price - marked item as bad');
+}
+
 // Fetch price for one item, insert snapshot, detect spikes
 async function processPriceForItem(itemName) {
   if (badEntries.isBad('item', itemName)) {
-    logger.warn({ itemName }, 'price - skipping bad item');
+    logger.debug({ itemName }, 'price - skipping bad item');
     return;
   }
 
   let priceData;
   try {
     priceData = await fetchPrice(itemName);
-    recordSteamSuccess('item', itemName);
   } catch (err) {
     const isRateLimit = err.message.includes('Rate limited');
     if (isRateLimit) {
       logger.error({ err, itemName }, 'price - rate limited, skipping');
       return 'rate_limited';
     }
-    if (isNetworkError(err)) {
-      logger.error({ err, itemName }, 'price - network error, will retry');
+    if (isNetworkError(err) || isInvalidResponse(err)) {
+      logger.error({ err, itemName }, 'price - network error or invalid response, will retry');
       return 'retry';
     }
     if (isServerError(err)) {
-      const count = recordServerError('item', itemName);
-      if (count < SERVER_ERROR_LIMIT) {
+      const count = recordFailure('item', itemName);
+      if (count < FAILURE_LIMIT) {
         logger.error({ err, itemName, count }, 'price - Steam server error, will retry');
         return 'retry';
       }
+      failures.item.delete(itemName);
     }
-    badEntries.markBad('item', itemName, err.message);
-    logger.warn({ itemName, reason: err.message }, 'price - marked item as bad');
+    giveUpOnItem(itemName, err.message);
     return;
   }
 
-  if (!priceData || priceData.lowest_price === null) {
-    badEntries.markBad('item', itemName, 'Steam returned no price data (success=false)');
-    logger.warn({ itemName }, 'price - marked item as bad, no price data from Steam');
+  if (!priceData) {
+    const count = recordFailure('item', itemName);
+    if (count < FAILURE_LIMIT) {
+      logger.warn({ itemName, count }, 'price - Steam gave no price (success=false), will retry');
+      return 'retry';
+    }
+    failures.item.delete(itemName);
+    giveUpOnItem(itemName, 'Steam returned success=false (unknown market_hash_name?)');
+    return;
+  }
+
+  recordSteamSuccess('item', itemName);
+
+  if (priceData.lowest_price === null) {
+    logger.info({ itemName }, 'price - no listings right now, will try again at the next scan');
     return;
   }
 

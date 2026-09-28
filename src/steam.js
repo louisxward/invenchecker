@@ -36,6 +36,26 @@ function isServerError(err) {
   return err.status >= 500;
 }
 
+// Steam sometimes answers with null or an HTML page instead of JSON (typically while throttling).
+// That says nothing about the entry, so callers retry.
+function isInvalidResponse(err) {
+  return err.invalidResponse === true;
+}
+
+async function readJson(res, what) {
+  let data;
+  try {
+    data = await res.json();
+  } catch (err) {
+    if (err.name === 'TimeoutError') throw err;
+    throw Object.assign(new Error(`Steam sent invalid JSON for ${what}`, { cause: err }), { invalidResponse: true });
+  }
+  if (data === null || typeof data !== 'object') {
+    throw Object.assign(new Error(`Steam sent no data for ${what}`), { invalidResponse: true });
+  }
+  return data;
+}
+
 function buildHeaders() {
   const headers = {
     'User-Agent':
@@ -77,7 +97,7 @@ async function fetchInventory(steam64id) {
       throw httpError(`Failed to fetch inventory for ${steam64id}: HTTP ${res.status}`, res.status);
     }
 
-    const data = await res.json();
+    const data = await readJson(res, `inventory ${steam64id}`);
 
     if (!data.success) {
       throw new Error(`Steam returned success=false for inventory ${steam64id}`);
@@ -104,11 +124,15 @@ async function fetchPrice(marketHashName) {
     throw httpError(`Failed to fetch price for "${marketHashName}": HTTP ${res.status}`, res.status);
   }
 
-  const data = await res.json();
+  const data = await readJson(res, `"${marketHashName}"`);
 
+  // success=false: Steam didn't give a price. That's what an unknown market_hash_name gets, but
+  // Steam also answers it for real items while throttling, so callers don't treat it as final.
   if (!data.success) {
     return null;
   }
+
+  // success=true without lowest_price: a real item with no listings right now
 
   return {
     lowest_price: parsePrice(data.lowest_price),
@@ -117,4 +141,4 @@ async function fetchPrice(marketHashName) {
   };
 }
 
-module.exports = { fetchInventory, fetchPrice, isNetworkError, isServerError, sleep };
+module.exports = { fetchInventory, fetchPrice, isNetworkError, isServerError, isInvalidResponse, sleep };

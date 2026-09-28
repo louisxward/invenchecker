@@ -10,6 +10,7 @@ const {
 } = require('./config');
 const logger = require('./logger');
 const accounts = require('./repositories/accounts');
+const badEntries = require('./repositories/badEntries');
 const inventoryFetches = require('./repositories/inventoryFetches');
 const priceSnapshots = require('./repositories/priceSnapshots');
 const { getRuleForPrice } = require('./rules');
@@ -43,15 +44,17 @@ function warnIfPressured(queue, rateLimitMs, area) {
   logger.warn({ queueSize: size, etaSecs }, `${area} - queue is backed up`);
 }
 
+// Bad entries are never queued; one cleared from bad_entries comes back with the next inventory
+// fetch, POST /alerts/scan or restart
 function enqueueInventory(steam64id) {
-  if (inventoryQueue.has(steam64id)) return;
+  if (inventoryQueue.has(steam64id) || badEntries.isBad('steam64id', steam64id)) return;
   inventoryQueue.set(steam64id, true);
   warnIfPressured(inventoryQueue, INVENTORY_RATE_LIMIT_MS, 'inventory');
   logger.debug({ steam64id }, 'inventory - enqueued');
 }
 
 function enqueuePrice(itemName) {
-  if (priceQueue.has(itemName)) return;
+  if (priceQueue.has(itemName) || badEntries.isBad('item', itemName)) return;
   priceQueue.set(itemName, true);
   warnIfPressured(priceQueue, PRICE_RATE_LIMIT_MS, 'price');
   logger.debug({ itemName }, 'price - enqueued');
