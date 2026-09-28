@@ -144,13 +144,19 @@ curl -X POST http://localhost:33001/alerts/scan
 Two queues run continuously in the background:
 
 - **Inventory queue** — fetches each Steam64 ID's inventory, upserts items to the DB, and feeds found items into the price queue.
-- **Price queue** — fetches the current market price for each item (rate-limited to ~1 req/sec), records a snapshot, and creates an alert if the price spikes above its 7-day low by the tier threshold.
+- **Price queue** — fetches the current market price for each item (one request every 3 seconds; Steam throttles faster lookups), records a snapshot, and creates an alert if the price spikes above its 7-day low by the tier threshold.
 
 After each item is processed it is re-enqueued according to its price tier (see `rules.json`): with the built-in rules, items worth ≥ £50 re-scan every 3 h, ≥ £10 every 6 h, ≥ £1 every 12 h, and cheaper items every 24 h. Alert and re-alert thresholds also vary by tier.
 
 When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used. Once no account tracks a steam64id or item any more (account deleted, entry removed, or item no longer in the inventory), it drops out of the rotation at its next scheduled scan.
 
-If Steam rate limits a request, returns a server error (5xx), or doesn't respond within 10 seconds, the worker pauses (`RATE_LIMIT_RETRY_MS`) and retries. A steam64id or item that gets 3 server errors while Steam is answering other requests is treated as broken. That, or any other Steam error (such as a private inventory), marks the steam64id or item as bad, and it is skipped from then on.
+If Steam rate limits a request, returns a server error (5xx) or an empty/invalid response, doesn't respond within 10 seconds, or (for a price) answers `success=false`, the worker pauses (`RATE_LIMIT_RETRY_MS`) and retries. Steam gives these answers while throttling, so they only count against an entry when Steam answered other requests in between. After 3 such failures:
+
+- an item that has been seen in an inventory (so its name is real) is skipped until its next scan;
+- a custom item is marked bad (its name probably doesn't match the market exactly);
+- a steam64id is marked bad.
+
+Other errors mark the entry bad straight away: a private inventory (400/403), a steam64id Steam doesn't know (404), or a 4xx for a custom item. Bad entries are skipped from then on and can't be re-added through the API. An item with no listings at the moment is just tried again at its next scan, and non-marketable inventory items (medals, coins and so on) aren't priced at all.
 
 Alerts are exposed via `GET /alerts` for polling.
 
@@ -162,7 +168,7 @@ Alerts are exposed via `GET /alerts` for polling.
 | `DB_PATH`                 | `<DATA_DIR>/invenchecker.db` | No       | Path to the SQLite database file                                              |
 | `CONFIG_PATH`             | `<DATA_DIR>/accounts.json`   | No       | Legacy accounts file, imported once on upgrade (see Accounts)                 |
 | `LOG_LEVEL`               | `info`                       | No       | Logging level                                                                 |
-| `PRICE_RATE_LIMIT_MS`     | `1100`                       | No       | Minimum milliseconds between price API requests                               |
+| `PRICE_RATE_LIMIT_MS`     | `3000`                       | No       | Minimum milliseconds between price API requests                               |
 | `INVENTORY_RATE_LIMIT_MS` | `3000`                       | No       | Minimum milliseconds between inventory API requests                           |
 | `SEVEN_DAYS_SECS`         | `604800`                     | No       | Duration in seconds representing 7 days                                       |
 | `REENQUEUE_DELAY_MS`      | `21600000`                   | No       | Fallback milliseconds between re-scans when no rule matches (default 6 hours) |

@@ -1,6 +1,6 @@
 'use strict';
 
-const { fetchInventory, fetchPrice, isNetworkError, isServerError } = require('../src/steam');
+const { fetchInventory, fetchPrice, isNetworkError, isServerError, isInvalidResponse } = require('../src/steam');
 
 function mockResponse(body, status = 200) {
   return {
@@ -136,5 +136,40 @@ describe('isServerError', () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe('invalid responses', () => {
+  let fetchSpy;
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(global, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('flags a null body', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(null));
+    expect(isInvalidResponse(await fetchPrice('x').catch((e) => e))).toBe(true);
+    fetchSpy.mockResolvedValueOnce(mockResponse(null));
+    expect(isInvalidResponse(await fetchInventory('76561198000000001').catch((e) => e))).toBe(true);
+  });
+
+  it('flags a body that is not JSON', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new SyntaxError('Unexpected token \'<\', "<html>" is not valid JSON')),
+    });
+    const err = await fetchPrice('x').catch((e) => e);
+    expect(isInvalidResponse(err)).toBe(true);
+    expect(err.message).toContain('invalid JSON');
+  });
+
+  it('returns a null lowest price for an item with no listings', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({ success: true, median_price: '£0.50', volume: '3' }));
+    expect(await fetchPrice('x')).toEqual({ lowest_price: null, median_price: 0.5, volume: 3 });
   });
 });

@@ -7,6 +7,7 @@ jest.mock('../src/steam', () => ({
   fetchPrice: jest.fn(),
   isNetworkError: jest.requireActual('../src/steam').isNetworkError,
   isServerError: jest.requireActual('../src/steam').isServerError,
+  isInvalidResponse: jest.requireActual('../src/steam').isInvalidResponse,
   sleep: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -176,12 +177,6 @@ describe('Scanner', () => {
   });
 
   describe('bad items', () => {
-    it('marks item as bad when Steam returns no price data', async () => {
-      steam.fetchPrice.mockResolvedValue(null);
-      await processPriceForItem(ITEM_NAME);
-      expect(badEntries.isBad('item', ITEM_NAME)).toBe(true);
-    });
-
     it('marks item as bad on non-rate-limit fetch error', async () => {
       steam.fetchPrice.mockRejectedValue(new Error(`Failed to fetch price for "${ITEM_NAME}": HTTP 404`));
       await processPriceForItem(ITEM_NAME);
@@ -420,6 +415,91 @@ describe('Scanner', () => {
       steam.fetchPrice.mockRejectedValueOnce(serverError(404));
       expect(await processPriceForItem('4xx item')).toBeUndefined();
       expect(badEntries.isBad('item', '4xx item')).toBe(true);
+    });
+  });
+
+  describe('no price from Steam', () => {
+    const ok = { lowest_price: 1.0, median_price: 1.0, volume: 1 };
+
+    // Items seen in an inventory are real market items
+    function seenInInventory(name) {
+      db.prepare('INSERT INTO inventory_items (steam64id, item_id, first_seen, last_seen) VALUES (?, ?, 1, 1)').run(
+        '76561198000000070',
+        itemNames.getOrCreateItemId(name)
+      );
+    }
+
+    // Steam answers success=false for `name`, after a successful request for another item
+    async function successFalse(name) {
+      steam.fetchPrice.mockResolvedValueOnce(ok);
+      await processPriceForItem(`${name} (other)`);
+      steam.fetchPrice.mockResolvedValueOnce(null);
+      return processPriceForItem(name);
+    }
+
+    it('retries a success=false answer instead of marking the item bad', async () => {
+      expect(await successFalse('SF once')).toBe('retry');
+      expect(badEntries.isBad('item', 'SF once')).toBe(false);
+    });
+
+    it('marks a custom item bad after 3 success=false answers while other prices load', async () => {
+      expect(await successFalse('SF custom')).toBe('retry');
+      expect(await successFalse('SF custom')).toBe('retry');
+      expect(await successFalse('SF custom')).toBeUndefined();
+      expect(badEntries.getBadReason('item', 'SF custom')).toMatch(/success=false/);
+    });
+
+    it('never marks an item seen in an inventory bad for success=false; it waits for the next scan', async () => {
+      seenInInventory('SF held');
+      for (let round = 0; round < 2; round++) {
+        expect(await successFalse('SF held')).toBe('retry');
+        expect(await successFalse('SF held')).toBe('retry');
+        expect(await successFalse('SF held')).toBeUndefined();
+      }
+      expect(badEntries.isBad('item', 'SF held')).toBe(false);
+    });
+
+    it('never marks an item seen in an inventory bad for a 4xx or repeated 5xx', async () => {
+      seenInInventory('Held errors');
+      steam.fetchPrice.mockRejectedValueOnce(Object.assign(new Error('HTTP 404'), { status: 404 }));
+      expect(await processPriceForItem('Held errors')).toBeUndefined();
+      for (let i = 0; i < 3; i++) {
+        steam.fetchPrice.mockResolvedValueOnce(ok);
+        await processPriceForItem('Held errors (other)');
+        steam.fetchPrice.mockRejectedValueOnce(Object.assign(new Error('HTTP 500'), { status: 500 }));
+        await processPriceForItem('Held errors');
+      }
+      expect(badEntries.isBad('item', 'Held errors')).toBe(false);
+    });
+
+    it('treats success=true without a lowest price as no listings: no snapshot, not bad', async () => {
+      steam.fetchPrice.mockResolvedValueOnce({ lowest_price: null, median_price: 0.5, volume: 3 });
+      expect(await processPriceForItem('No listings')).toBeUndefined();
+      expect(badEntries.isBad('item', 'No listings')).toBe(false);
+      expect(db.prepare('SELECT COUNT(*) AS c FROM price_snapshots').get().c).toBe(0);
+    });
+
+    it('retries an invalid response (null or HTML) instead of marking the item bad', async () => {
+      steam.fetchPrice.mockRejectedValueOnce(
+        Object.assign(new Error('Steam sent no data for "x"'), { invalidResponse: true })
+      );
+      expect(await processPriceForItem('Invalid response')).toBe('retry');
+      expect(badEntries.isBad('item', 'Invalid response')).toBe(false);
+    });
+
+    it('records non-marketable inventory items without queueing them for a price', async () => {
+      steam.fetchInventory.mockResolvedValue([
+        { market_hash_name: 'Tradable Thing', marketable: 1 },
+        { market_hash_name: 'Service Medal', marketable: 0 },
+      ]);
+      const enqueue = jest.fn();
+      await processInventoryForSteamId(STEAM_ID, enqueue);
+      expect(enqueue.mock.calls).toEqual([['Tradable Thing']]);
+      const names = db
+        .prepare('SELECT n.name FROM inventory_items ii JOIN item_names n ON n.id = ii.item_id ORDER BY n.name')
+        .all()
+        .map((r) => r.name);
+      expect(names).toEqual(['Service Medal', 'Tradable Thing']);
     });
   });
 });

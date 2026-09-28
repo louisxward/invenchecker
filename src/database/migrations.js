@@ -225,7 +225,22 @@ function accountTables(db, { accountsPath }) {
   }
 }
 
-const MIGRATIONS = [baseSchema, accountTables];
+// Migration 3: bad_entries rows that older versions wrote for failures that say nothing about the
+// entry (network errors, timeouts, 5xx, invalid responses, success=false while throttled) are
+// removed, so those steam64ids and items are scanned again. Invalid steam64ids (4xx) stay.
+function clearTransientBadEntries(db) {
+  db.prepare(
+    `DELETE FROM bad_entries
+     WHERE reason IN ('fetch failed', 'The operation was aborted due to timeout',
+                      'Steam returned no price data (success=false)')
+        OR reason LIKE '%: HTTP 5__'
+        OR reason LIKE 'Unexpected token%'
+        OR reason LIKE '%is not valid JSON%'
+        OR reason LIKE 'Cannot read properties of null%'`
+  ).run();
+}
+
+const MIGRATIONS = [baseSchema, accountTables, clearTransientBadEntries];
 
 // Applies the migrations after the database's user_version. init() runs this in one transaction,
 // so a failure part-way leaves the database as it was.

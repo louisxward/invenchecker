@@ -115,7 +115,7 @@ describe('database migrations', () => {
       'item_names',
       'price_snapshots',
     ]);
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
     expect(columns(db, 'price_snapshots')).toContain('item_id');
     expect(columns(db, 'alerts')).not.toContain('resolved');
     expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
@@ -266,6 +266,52 @@ describe('accounts.json import (migration 2)', () => {
       expect(tables(check)).toEqual([]);
     } finally {
       check.close();
+    }
+  });
+});
+
+describe('clearing transient bad entries (migration 3)', () => {
+  it('removes rows older versions wrote for temporary failures and keeps the rest', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invenchecker-bad-'));
+    const dbPath = path.join(dir, 'test.db');
+    try {
+      // A database at version 2, with bad entries from the old error handling
+      const { database: v2 } = loadModules(dbPath);
+      v2.init();
+      const raw = v2.getDb();
+      raw.pragma('user_version = 2');
+      const add = raw.prepare('INSERT INTO bad_entries (type, value, reason, added_at) VALUES (?, ?, ?, 1)');
+      const transient = [
+        ['item', 'A', 'Steam returned no price data (success=false)'],
+        ['item', 'B', 'fetch failed'],
+        ['item', 'C', 'The operation was aborted due to timeout'],
+        ['item', 'D', 'Failed to fetch price for "D": HTTP 500'],
+        ['item', 'E', 'Failed to fetch price for "E": HTTP 503'],
+        ['steam64id', '76561198087314132', 'Failed to fetch inventory for 76561198087314132: HTTP 500'],
+        ['item', 'F', 'Unexpected token \'<\', "<html>" is not valid JSON'],
+        ['item', 'G', "Cannot read properties of null (reading 'success')"],
+      ];
+      const kept = [
+        ['steam64id', '765611980873141444', 'Failed to fetch inventory for 765611980873141444: HTTP 404'],
+        ['steam64id', '76561198000000001', 'Cannot access inventory for 76561198000000001'],
+        ['item', 'H', 'Failed to fetch price for "H": HTTP 400'],
+        ['item', 'I', 'Steam returned success=false (unknown market_hash_name?)'],
+      ];
+      for (const row of [...transient, ...kept]) add.run(...row);
+      v2.close();
+
+      const { database } = loadModules(dbPath);
+      database.init();
+      const left = database
+        .getDb()
+        .prepare('SELECT type, value, reason FROM bad_entries ORDER BY value')
+        .all()
+        .map((r) => [r.type, r.value, r.reason]);
+      expect(left).toEqual([...kept].sort((a, b) => a[1].localeCompare(b[1])));
+      expect(database.getDb().pragma('user_version', { simple: true })).toBe(3);
+      database.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

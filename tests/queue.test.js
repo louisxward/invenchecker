@@ -7,6 +7,7 @@ jest.mock('../src/steam', () => ({
   fetchPrice: jest.fn(),
   isNetworkError: jest.requireActual('../src/steam').isNetworkError,
   isServerError: jest.requireActual('../src/steam').isServerError,
+  isInvalidResponse: jest.requireActual('../src/steam').isInvalidResponse,
   sleep: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -47,6 +48,18 @@ describe('queue re-enqueueing', () => {
       setAccounts([{ uid: 'a', steam64ids: [] }]);
       queue.requeueInventory(OTHER_ID);
       expect(queue.isInventoryQueued(OTHER_ID)).toBe(false);
+    });
+  });
+
+  describe('bad entries', () => {
+    it('are never queued', () => {
+      const badEntries = require('../src/repositories/badEntries');
+      badEntries.markBad('item', 'Queued Bad Item', 'test');
+      badEntries.markBad('steam64id', '76561198000000049', 'test');
+      queue.enqueuePrice('Queued Bad Item');
+      queue.enqueueInventory('76561198000000049');
+      expect(queue.isPriceQueued('Queued Bad Item')).toBe(false);
+      expect(queue.isInventoryQueued('76561198000000049')).toBe(false);
     });
   });
 
