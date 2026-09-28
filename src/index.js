@@ -1,50 +1,63 @@
-"use strict";
+'use strict';
 
-const logger = require("./logger");
-const db = require("./db");
-const { configPath } = require("./config");
-const { startScheduler } = require("./scheduler");
-const { PORT } = require("./appConfig");
-const express = require("express");
-const fs = require("fs");
-const path = require("path");
+const fs = require('node:fs');
+const { PORT, ACCOUNTS_PATH } = require('./config');
+const logger = require('./logger');
 
-// Ensure config file exists
-const configDir = path.dirname(configPath);
-fs.mkdirSync(configDir, { recursive: true });
-if (!fs.existsSync(configPath)) {
-  fs.writeFileSync(configPath, "[]", "utf8");
-  logger.info({ configPath }, "Created empty accounts.json");
+// Anything that slips past a handler is logged rather than disappearing or crashing silently
+process.on('unhandledRejection', (err) => {
+  logger.error({ err }, 'process - unhandled rejection');
+});
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'process - uncaught exception');
+  process.exit(1);
+});
+
+const { createApp } = require('./app');
+const database = require('./database');
+const { startQueues } = require('./queue');
+
+// Migrations run here, before the queues or the API can use the database
+try {
+  database.init();
+} catch (err) {
+  logger.fatal({ err }, 'startup - database failed to open or migrate');
+  process.exit(1);
 }
 
-// Start the 6-hour scheduler
-const schedulerTask = startScheduler();
+// Accounts live in the database; accounts.json was imported once, when the accounts tables were created
+if (fs.existsSync(ACCOUNTS_PATH)) {
+  logger.warn({ accountsPath: ACCOUNTS_PATH }, 'startup - accounts.json is no longer read and can be deleted');
+}
 
-// Express app
-const app = express();
-app.use(express.json());
-app.use(require("./routes"));
+// The queue workers run continuously, each entry re-scanning on its own interval
+startQueues();
 
-// Global error handler
-app.use((err, req, res, _next) => {
-  logger.error({ err, path: req.path }, "Unhandled request error");
-  res.status(err.status || 500).json({ error: err.message || "Internal server error" });
+// Express 5 passes listen errors (such as the port being in use) to this callback
+const server = createApp().listen(PORT, (err) => {
+  if (err) {
+    logger.fatal({ err, port: PORT }, 'startup - api failed to start');
+    process.exit(1);
+  }
+  logger.info({ port: PORT }, 'startup - api listening');
 });
 
-const server = app.listen(PORT, () => {
-  logger.info({ port: PORT }, "invenchecker started");
-});
-
-// Graceful shutdown
-function shutdown() {
-  logger.info("Shutting down...");
-  schedulerTask.stop();
+// Graceful shutdown. Forces an exit if that takes longer than Docker's 10 second stop timeout allows.
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, 'shutdown - start');
+  setTimeout(() => {
+    logger.error('shutdown - timed out, forcing exit');
+    process.exit(1);
+  }, 8000).unref();
   server.close(() => {
-    db.close();
-    logger.info("Shutdown complete");
+    database.close();
+    logger.info('shutdown - done');
     process.exit(0);
   });
 }
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));

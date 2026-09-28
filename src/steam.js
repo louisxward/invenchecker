@@ -1,6 +1,14 @@
-"use strict";
+'use strict';
 
-const { STEAM_APP_ID: APP_ID, STEAM_INVENTORY_URL, STEAM_PRICE_URL, INVENTORY_RATE_LIMIT_MS, STEAM_CURRENCY } = require("./appConfig");
+const {
+  STEAM_APP_ID: APP_ID,
+  STEAM_INVENTORY_URL,
+  STEAM_PRICE_URL,
+  INVENTORY_RATE_LIMIT_MS,
+  STEAM_CURRENCY,
+} = require('./config');
+
+const REQUEST_TIMEOUT_MS = 10_000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -8,17 +16,32 @@ function sleep(ms) {
 
 function parsePrice(str) {
   if (!str) return null;
-  const cleaned = str.replace(/[^0-9.]/g, "");
+  const cleaned = str.replace(/[^0-9.]/g, '');
   const val = parseFloat(cleaned);
   return isNaN(val) ? null : val;
 }
 
+// No response at all (DNS, connection reset, timeout) says nothing about the item or steam64id,
+// so callers retry these instead of marking the entry bad. HTTP errors are thrown as plain Errors.
+function isNetworkError(err) {
+  return err.name === 'TimeoutError' || (err.name === 'TypeError' && err.message === 'fetch failed');
+}
+
+function httpError(message, status) {
+  return Object.assign(new Error(message), { status });
+}
+
+// Steam answered, but with a 5xx: either an outage or something wrong with this one entry
+function isServerError(err) {
+  return err.status >= 500;
+}
+
 function buildHeaders() {
   const headers = {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    Accept: "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9"
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
   };
 
   // Steam session cookies — required for inventory access.
@@ -35,14 +58,14 @@ function buildHeaders() {
 
 async function fetchInventory(steam64id) {
   const headers = buildHeaders();
-  headers["Referer"] = `https://steamcommunity.com/profiles/${steam64id}/inventory/`;
+  headers['Referer'] = `https://steamcommunity.com/profiles/${steam64id}/inventory/`;
 
   const descriptions = [];
-  let cursor = "";
+  let cursor = '';
 
   while (true) {
-    const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=100${cursor ? `&start_assetid=${cursor}` : ""}`;
-    const res = await fetch(url, { headers });
+    const url = `${STEAM_INVENTORY_URL}/${steam64id}/${APP_ID}/2?l=english&count=100${cursor ? `&start_assetid=${cursor}` : ''}`;
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
     if (res.status === 400 || res.status === 403) {
       throw new Error(`Cannot access inventory for ${steam64id}`);
@@ -51,7 +74,7 @@ async function fetchInventory(steam64id) {
       throw new Error(`Rate limited fetching inventory for ${steam64id}`);
     }
     if (!res.ok) {
-      throw new Error(`Failed to fetch inventory for ${steam64id}: HTTP ${res.status}`);
+      throw httpError(`Failed to fetch inventory for ${steam64id}: HTTP ${res.status}`, res.status);
     }
 
     const data = await res.json();
@@ -72,13 +95,13 @@ async function fetchInventory(steam64id) {
 
 async function fetchPrice(marketHashName) {
   const url = `${STEAM_PRICE_URL}/?appid=${APP_ID}&currency=${STEAM_CURRENCY}&market_hash_name=${encodeURIComponent(marketHashName)}`;
-  const res = await fetch(url, { headers: buildHeaders() });
+  const res = await fetch(url, { headers: buildHeaders(), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
   if (res.status === 429) {
     throw new Error(`Rate limited fetching price for "${marketHashName}"`);
   }
   if (!res.ok) {
-    throw new Error(`Failed to fetch price for "${marketHashName}": HTTP ${res.status}`);
+    throw httpError(`Failed to fetch price for "${marketHashName}": HTTP ${res.status}`, res.status);
   }
 
   const data = await res.json();
@@ -90,8 +113,8 @@ async function fetchPrice(marketHashName) {
   return {
     lowest_price: parsePrice(data.lowest_price),
     median_price: parsePrice(data.median_price),
-    volume: data.volume ? parseInt(data.volume.replace(/,/g, ""), 10) : null
+    volume: data.volume ? parseInt(data.volume.replace(/,/g, ''), 10) : null,
   };
 }
 
-module.exports = { fetchInventory, fetchPrice, sleep };
+module.exports = { fetchInventory, fetchPrice, isNetworkError, isServerError, sleep };

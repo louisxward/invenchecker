@@ -31,11 +31,11 @@ paths:
                   lastScannedAt:
                     type: integer
                     nullable: true
-                    description: Unix timestamp of last scan
+                    description: Unix timestamp of the last POST /alerts/scan
                   lastScanMs:
                     type: integer
                     nullable: true
-                    description: Duration of last scan in milliseconds
+                    description: Milliseconds from the last finished POST /alerts/scan until the queues had processed everything (including retries), or null if none has finished yet
                   inventoryQueueSize:
                     type: integer
                     description: Number of steam64ids pending in the inventory queue
@@ -188,6 +188,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another account already has this discordId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
     delete:
       tags: [accounts]
@@ -716,4 +722,4 @@ components:
         nextScanAt:
           type: integer
           nullable: true
-          description: Estimated Unix timestamp of next price check, or null if queued or never scanned
+          description: Estimated Unix timestamp of next price check (lastPrice.captured_at + the scanHours of the rule for that price), or null if queued or never scanned

@@ -1,13 +1,13 @@
 'use strict';
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const os = require('node:os');
+const path = require('node:path');
 
-// Each Jest worker process gets a unique config file via its PID.
-// DB is in-memory so each test file starts with a fresh database.
+// DB is in-memory so each test file starts with a fresh database; tests set accounts with
+// tests/helpers/accounts.js.
 process.env.DB_PATH = ':memory:';
 process.env.LOG_LEVEL = 'silent';
-process.env.CONFIG_PATH = path.join(os.tmpdir(), `invenchecker-test-${process.pid}.json`);
-
-fs.writeFileSync(process.env.CONFIG_PATH, '[]', 'utf8');
+// No accounts.json to import (tests/db.test.js covers the import)
+process.env.CONFIG_PATH = path.join(os.tmpdir(), `invenchecker-test-accounts-${process.pid}-missing.json`);
+// Never pick up a real data/rules.json; tests rely on the built-in default rules.
+process.env.RULES_PATH = path.join(os.tmpdir(), `invenchecker-test-rules-${process.pid}-missing.json`);

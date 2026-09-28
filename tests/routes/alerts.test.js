@@ -6,9 +6,13 @@ const express = require('express');
 describe('Alerts routes', () => {
   let app;
   let db;
+  let itemNames;
 
   beforeAll(() => {
-    db = require('../../src/db');
+    const database = require('../../src/database');
+    database.init();
+    db = database.getDb();
+    itemNames = require('../../src/repositories/itemNames');
     app = express();
     app.use(express.json());
     app.use('/alerts', require('../../src/routes/alerts'));
@@ -20,14 +24,16 @@ describe('Alerts routes', () => {
   });
 
   function insertAlert(itemName, uid) {
-    const itemId = db.getOrCreateItemId(itemName);
+    const itemId = itemNames.getOrCreateItemId(itemName);
     const now = Math.floor(Date.now() / 1000);
-    const alertId = db.prepare(
-      'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(itemId, 20.0, 12.0, 10.0, now).lastInsertRowid;
-    const recipientId = db.prepare(
-      'INSERT INTO alert_recipients (alert_id, uid) VALUES (?, ?)'
-    ).run(alertId, uid).lastInsertRowid;
+    const alertId = db
+      .prepare(
+        'INSERT INTO alerts (item_id, spike_pct, price_at_alert, seven_day_low, created_at) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(itemId, 20.0, 12.0, 10.0, now).lastInsertRowid;
+    const recipientId = db
+      .prepare('INSERT INTO alert_recipients (alert_id, uid) VALUES (?, ?)')
+      .run(alertId, uid).lastInsertRowid;
     return { alertId, recipientId };
   }
 
@@ -109,6 +115,23 @@ describe('Alerts routes', () => {
       const res = await request(app).put('/alerts/user/nobody/resolve-all');
       expect(res.status).toBe(200);
       expect(res.body.resolved).toBe(0);
+    });
+  });
+  describe('POST /alerts/scan', () => {
+    it('enqueues without a body', async () => {
+      const res = await request(app).post('/alerts/scan');
+      expect(res.status).toBe(200);
+      expect(res.body.force).toBe(false);
+    });
+
+    it('accepts force as a query parameter', async () => {
+      const res = await request(app).post('/alerts/scan?force=true');
+      expect(res.body.force).toBe(true);
+    });
+
+    it('accepts force in the body', async () => {
+      const res = await request(app).post('/alerts/scan').send({ force: true });
+      expect(res.body.force).toBe(true);
     });
   });
 });

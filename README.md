@@ -9,34 +9,32 @@ CS2 inventory price tracker. Monitors Steam inventories for tracked items, recor
 ## Quick Start
 
 ```bash
-# 1. Create required host directory
-mkdir -p data
+# 1. Create the shared network (chowbot joins it too) and the host data directory
+docker network create invenchecker
+sudo mkdir -p /opt/data/invenchecker
 
 # 2. Start the app
 docker compose up --build
 ```
 
-The app runs on port **33001**.
+The app listens on port **33001** inside the `invenchecker` Docker network; it isn't published on the host.
+
+## Data files
+
+All state lives in the data directory: `/opt/data/invenchecker` on the Docker host (mounted at `/app/data`), or `data/` next to `src/` when running locally.
+
+| File              | Contents                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `invenchecker.db` | SQLite: accounts, item names, price snapshots, alerts, inventory state, bad entries |
+| `rules.json`      | Optional price-tier rules, edited by hand                                           |
 
 ## Configuration
 
-### accounts.json
+### Accounts
 
-Accounts are stored in `data/accounts.json`. You can edit this file directly or use the API. The file is mounted as a Docker volume so changes persist across container restarts.
+Accounts are stored in the database and managed through the Accounts endpoints below. Each has a `uid`, `friendlyName`, `discordId`, `steam64ids[]` and `customItems[]`.
 
-Example:
-
-```json
-[
-  {
-    "uid": "a1b2c3d4e5f6a7b8",
-    ?"friendlyName": "My Account",
-    ?"discordId": "123456789012345678",
-    ?"steam64ids": ["76561198000000000"],
-    ?"customItems": ["AK-47 | Redline (Field-Tested)", "AWP | Dragon Lore (Factory New)"]
-  }
-]
-```
+**Upgrading from `accounts.json`:** accounts used to live in `accounts.json` in the data directory. The first start of this version imports that file into the database, once, and it isn't read again (a warning is logged at startup while it still exists, so delete it once you've checked the accounts with `GET /accounts`). If the file is malformed (not valid JSON, an entry without a `uid`, a repeated `uid`, or fields of the wrong type), startup stops with an error naming the entry and the database is left unchanged; fix the file and start again.
 
 > **Note:** `customItems` values must match the Steam `market_hash_name` exactly (case-sensitive).
 
@@ -53,15 +51,18 @@ Controls scan interval and alert thresholds per price tier. Rules are evaluated 
 | `alertPct`   | % above 7-day low to trigger an alert                             |
 | `realertPct` | % above 7-day low to allow a re-alert within the same spike event |
 
-Default (`data/rules.json`):
+Without a `rules.json` (or if it's invalid), these built-in rules apply. A `rules.json` replaces them completely, so copy them as a starting point:
 
 ```json
 [
-  { "minPrice": 10, "scanHours": 12, "alertPct": 30, "realertPct": 50 },
-  { "minPrice": 1, "scanHours": 12, "alertPct": 50, "realertPct": 75 },
-  { "minPrice": 0, "scanHours": 6, "alertPct": 15, "realertPct": 20 }
+  { "minPrice": 50, "scanHours": 3, "alertPct": 15, "realertPct": 25 },
+  { "minPrice": 10, "scanHours": 6, "alertPct": 20, "realertPct": 35 },
+  { "minPrice": 1, "scanHours": 12, "alertPct": 30, "realertPct": 50 },
+  { "minPrice": 0, "scanHours": 24, "alertPct": 50, "realertPct": 100 }
 ]
 ```
+
+Cheap items move in large percentage steps (1p on a 5p item is +20%) and make up most of an inventory, so they alert least readily and are scanned least often. Valuable items are scanned most often and alert on smaller moves.
 
 Changes take effect on restart.
 
@@ -69,9 +70,9 @@ Changes take effect on restart.
 
 ### Health
 
-| Method | Path      | Description                                                     |
-| ------ | --------- | --------------------------------------------------------------- |
-| GET    | `/health` | Returns status, last manual scan time, and current queue depths |
+| Method | Path      | Description                                                                  |
+| ------ | --------- | ---------------------------------------------------------------------------- |
+| GET    | `/health` | Returns status, last manual scan time and duration, and current queue depths |
 
 ### Accounts
 
@@ -145,9 +146,11 @@ Two queues run continuously in the background:
 - **Inventory queue** — fetches each Steam64 ID's inventory, upserts items to the DB, and feeds found items into the price queue.
 - **Price queue** — fetches the current market price for each item (rate-limited to ~1 req/sec), records a snapshot, and creates an alert if the price spikes above its 7-day low by the tier threshold.
 
-After each item is processed it is re-enqueued according to its price tier (see `rules.json`): by default, items worth ≥ £10 re-scan every 12 h, items worth ≥ £1 every 12 h, and cheaper items every 6 h. Alert and re-alert thresholds also vary by tier.
+After each item is processed it is re-enqueued according to its price tier (see `rules.json`): with the built-in rules, items worth ≥ £50 re-scan every 3 h, ≥ £10 every 6 h, ≥ £1 every 12 h, and cheaper items every 24 h. Alert and re-alert thresholds also vary by tier.
 
-When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used.
+When an account is created or updated (new steam64id or custom item added), those items are enqueued immediately — no waiting for the next scheduled run. Items that were scanned recently are skipped unless `?force=true` is used. Once no account tracks a steam64id or item any more (account deleted, entry removed, or item no longer in the inventory), it drops out of the rotation at its next scheduled scan.
+
+If Steam rate limits a request, returns a server error (5xx), or doesn't respond within 10 seconds, the worker pauses (`RATE_LIMIT_RETRY_MS`) and retries. A steam64id or item that gets 3 server errors while Steam is answering other requests is treated as broken. That, or any other Steam error (such as a private inventory), marks the steam64id or item as bad, and it is skipped from then on.
 
 Alerts are exposed via `GET /alerts` for polling.
 
@@ -157,12 +160,13 @@ Alerts are exposed via `GET /alerts` for polling.
 | ------------------------- | ---------------------------- | -------- | ----------------------------------------------------------------------------- |
 | `PORT`                    | `33001`                      | No       | Port the server listens on                                                    |
 | `DB_PATH`                 | `<DATA_DIR>/invenchecker.db` | No       | Path to the SQLite database file                                              |
-| `CONFIG_PATH`             | `<DATA_DIR>/accounts.json`   | No       | Path to the accounts config file                                              |
+| `CONFIG_PATH`             | `<DATA_DIR>/accounts.json`   | No       | Legacy accounts file, imported once on upgrade (see Accounts)                 |
 | `LOG_LEVEL`               | `info`                       | No       | Logging level                                                                 |
 | `PRICE_RATE_LIMIT_MS`     | `1100`                       | No       | Minimum milliseconds between price API requests                               |
 | `INVENTORY_RATE_LIMIT_MS` | `3000`                       | No       | Minimum milliseconds between inventory API requests                           |
 | `SEVEN_DAYS_SECS`         | `604800`                     | No       | Duration in seconds representing 7 days                                       |
 | `REENQUEUE_DELAY_MS`      | `21600000`                   | No       | Fallback milliseconds between re-scans when no rule matches (default 6 hours) |
+| `RATE_LIMIT_RETRY_MS`     | `60000`                      | No       | Milliseconds a worker pauses after a rate limit or network error              |
 | `MAX_STEAM64IDS`          | `10`                         | No       | Maximum Steam64 IDs per account                                               |
 | `MAX_CUSTOM_ITEMS`        | `50`                         | No       | Maximum custom items per account                                              |
 | `QUEUE_WARN_SIZE`         | `50`                         | No       | Log a warning when a queue reaches this many pending items                    |
@@ -171,11 +175,15 @@ Alerts are exposed via `GET /alerts` for polling.
 | `STEAM_CURRENCY`          | `2`                          | No       | Steam market currency code (1=USD, 2=GBP, 3=EUR)                              |
 | `RULES_PATH`              | `<DATA_DIR>/rules.json`      | No       | Path to price-tier rules config                                               |
 
+Docker Compose loads `.env` if it exists; see `.env.example`.
+
 ## Local Development (without Docker)
+
+Requires Node 24.
 
 ```bash
 npm install
-mkdir -p data
-echo '[]' > data/accounts.json
-NODE_ENV=development npm run dev
+npm run dev      # pretty logs, restarts on save; creates data/invenchecker.db if missing
+npm test
+npm run lint
 ```
