@@ -7,7 +7,6 @@ const DATA_DIR = path.join(__dirname, '../data');
 module.exports = {
   PORT: process.env.PORT ? Number(process.env.PORT) : 33001,
   DB_PATH: process.env.DB_PATH || path.join(DATA_DIR, 'invenchecker.db'),
-  ACCOUNTS_PATH: process.env.CONFIG_PATH || path.join(DATA_DIR, 'accounts.json'),
   LOG_LEVEL: process.env.LOG_LEVEL || 'info',
   // Steam throttles priceoverview hard (a 429, or success=false, after a few quick requests)
   PRICE_RATE_LIMIT_MS: process.env.PRICE_RATE_LIMIT_MS ? Number(process.env.PRICE_RATE_LIMIT_MS) : 3000,

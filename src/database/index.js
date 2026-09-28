@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
-const { DB_PATH, ACCOUNTS_PATH } = require('../config');
+const { DB_PATH } = require('../config');
 const logger = require('../logger');
 const { migrate } = require('./migrations');
 
@@ -16,8 +16,7 @@ function init() {
   try {
     conn.pragma('journal_mode = WAL');
     conn.pragma('foreign_keys = ON');
-    // accounts.json is only read the first time, when migration 2 imports it
-    conn.transaction(() => migrate(conn, { accountsPath: ACCOUNTS_PATH }))();
+    conn.transaction(() => migrate(conn))();
   } catch (err) {
     conn.close();
     throw err;

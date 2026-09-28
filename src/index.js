@@ -1,7 +1,6 @@
 'use strict';
 
-const fs = require('node:fs');
-const { PORT, ACCOUNTS_PATH } = require('./config');
+const { PORT } = require('./config');
 const logger = require('./logger');
 
 // Anything that slips past a handler is logged rather than disappearing or crashing silently
@@ -23,11 +22,6 @@ try {
 } catch (err) {
   logger.fatal({ err }, 'startup - database failed to open or migrate');
   process.exit(1);
-}
-
-// Accounts live in the database; accounts.json was imported once, when the accounts tables were created
-if (fs.existsSync(ACCOUNTS_PATH)) {
-  logger.warn({ accountsPath: ACCOUNTS_PATH }, 'startup - accounts.json is no longer read and can be deleted');
 }
 
 // The queue workers run continuously, each entry re-scanning on its own interval
